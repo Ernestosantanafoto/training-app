@@ -109,61 +109,40 @@ function Dashboard({ sessions, onDayClick }) {
           const ds = `${calYear}-${calMonthStr}-${String(d).padStart(2,'0')}`;
           if (!ss.length) return <div key={d} style={{aspectRatio:'1',background:'var(--sf)',border:'1px solid var(--bd)',display:'flex',alignItems:'flex-start',justifyContent:'flex-start'}}><span style={{opacity:.2,fontFamily:"'Bebas Neue',sans-serif",fontSize:11,padding:'2px 0 0 3px'}}>{String(d).padStart(2,'0')}</span></div>;
 
-          const hasGym  = ss.some(s => s.type==='gym');
+          // ── UNIVERSAL CELL: one horizontal slice per activity ──
           const cardioSess = ss.filter(s => isCardioType(s.type));
-          const hasRun  = cardioSess.length > 0;
-          const hasHike = ss.some(s => s.type==='senderismo');
-          // Pick the primary (most intense) cardio activity for color/label
-          const primaryCardio = cardioSess.sort((a,b)=>getIntensity([b])-getIntensity([a]))[0];
-          const cardioCol = primaryCardio ? typeColor(primaryCardio.type) : typeColor('run');
-          const runLbl  = cardioCol.label;
-          const runBg   = cardioCol.bg;
-          const runBorder = cardioCol.border;
-          const runTxt  = cardioCol.color;
-          const gymTag  = 'gym';
-          const intens  = getIntensity(ss);
+          // Order: gym sessions first (yellow on top), then cardio/sport sessions.
+          // Each session gets an equal-height slice with its own color.
+          const gymSess = ss.filter(s => s.type === 'gym');
+          const orderedSess = [...gymSess, ...cardioSess];
+          const n = orderedSess.length;
+          // Border color = color of the most intense activity that day
+          const topSess = [...orderedSess].sort((a,b)=>getIntensity([b])-getIntensity([a]))[0];
+          const cellBorder = topSess ? typeColor(topSess.type).border : 'var(--bd)';
 
-          if (hasGym && (hasRun || hasHike)) {
-            const runBgSolid = cardioCol.bg;
-            return (
-              <button key={d} onClick={() => onDayClick&&onDayClick(ds)}
-                style={{aspectRatio:'1',display:'flex',flexDirection:'column',background:'#0a0a0a',border:'1px solid rgba(232,255,71,0.35)',overflow:'hidden',cursor:'pointer',padding:0,width:'100%'}}>
-                {/* TOP HALF — gym */}
-                <div style={{flex:'0 0 50%',width:'100%',background:'rgba(232,255,71,0.08)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:1,borderBottom:`1px solid rgba(255,255,255,0.06)`}}>
-                  <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:11,color:'var(--ac)',lineHeight:1}}>{String(d).padStart(2,'0')}</span>
-                  <span style={{fontSize:5,color:'var(--ac)',letterSpacing:.5,textTransform:'uppercase',opacity:.7}}>gym</span>
-                  <IntensityBars level={getIntensity(ss.filter(s=>s.type==='gym'))} color="var(--ac)"/>
-                </div>
-                {/* BOTTOM HALF — cardio/hike */}
-                <div style={{flex:'0 0 50%',width:'100%',background:runBgSolid,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:1}}>
-                  <span style={{fontSize:5,color:runTxt,letterSpacing:.5,textTransform:'uppercase'}}>{runLbl}</span>
-                  <IntensityBars level={getIntensity(ss.filter(s=>s.type!=='gym'))} color={runTxt}/>
-                </div>
-              </button>
-            );
-          }
-          const intR = getIntensity(ss);
-          if (hasRun || hasHike) return (
-            <button key={d} onClick={() => onDayClick&&onDayClick(ds)} style={{aspectRatio:'1',display:'flex',flexDirection:'column',background:runBg,border:`1px solid ${runBorder}`,overflow:'hidden',cursor:'pointer',padding:0,width:'100%'}}>
-              <div style={{padding:'2px 0 0',textAlign:'center',fontFamily:"'Bebas Neue',sans-serif",fontSize:11,color:runTxt,lineHeight:1}}>{String(d).padStart(2,'0')}</div>
-              <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:1}}>
-                <span style={{fontSize:5.5,color:runTxt,letterSpacing:.3,textTransform:'uppercase'}}>{runLbl}</span>
-                <IntensityBars level={intR} color={runTxt}/>
-              </div>
-            </button>
-          );
-          const intG = getIntensity(ss);
           return (
-            <button key={d} onClick={() => onDayClick&&onDayClick(ds)} style={{aspectRatio:'1',display:'flex',flexDirection:'column',background:'rgba(232,255,71,0.06)',border:'1px solid rgba(232,255,71,0.35)',overflow:'hidden',cursor:'pointer',padding:0,width:'100%'}}>
-              <div style={{padding:'2px 0 0',textAlign:'center',fontFamily:"'Bebas Neue',sans-serif",fontSize:11,color:'var(--ac)',lineHeight:1}}>{String(d).padStart(2,'0')}</div>
-              <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:1}}>
-                <span style={{fontSize:5.5,color:'var(--ac)',letterSpacing:.3,textTransform:'uppercase',opacity:.8}}>{gymTag}</span>
-                <IntensityBars level={intG} color="var(--ac)"/>
-              </div>
+            <button key={d} onClick={() => onDayClick&&onDayClick(ds)}
+              style={{aspectRatio:'1',display:'flex',flexDirection:'column',background:'#0a0a0a',border:`1px solid ${cellBorder}`,overflow:'hidden',cursor:'pointer',padding:0,width:'100%'}}>
+              {orderedSess.map((s, idx) => {
+                const tc = typeColor(s.type);
+                const lvl = getIntensity([s]);
+                const isFirst = idx === 0;
+                return (
+                  <div key={s.id || idx}
+                    style={{flex:`1 1 ${100/n}%`, minHeight:0, width:'100%', background:tc.bg,
+                      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:1,
+                      borderTop: isFirst ? 'none' : '1px solid rgba(255,255,255,0.07)', overflow:'hidden'}}>
+                    {isFirst && <span style={{fontFamily:"'Bebas Neue',sans-serif", fontSize: n>=3?9:11, color:tc.color, lineHeight:1}}>{String(d).padStart(2,'0')}</span>}
+                    <span style={{fontSize: n>=3?4.5:5, color:tc.color, letterSpacing:.4, textTransform:'uppercase', opacity:.85, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%'}}>{tc.label}</span>
+                    {n <= 2 && <IntensityBars level={lvl} color={tc.color}/>}
+                  </div>
+                );
+              })}
             </button>
           );
         })}
       </div>
+
 
       {/* Heatmap — eje Y: grupos musculares, eje X: fechas scroll horizontal */}
       <div className="sl">Mapa de actividad</div>

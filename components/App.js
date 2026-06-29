@@ -5,7 +5,7 @@ import { fmtDate, fmtShort, getIntensity, BIO_FIELDS, typeColor, isCardioType } 
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import Entrenador from './Entrenador';
 import NuevaSesion from './NuevaSesion';
-import { useNutritionData, dayTotals, dayStatus, calcStreak } from '../lib/useNutritionData';
+import { useNutritionData, dayTotals, dayStatus, calcStreak, rankedTemplates } from '../lib/useNutritionData';
 
 const PANELS = ['dashboard','prs','bio','diario','entreno'];
 const NAV = [
@@ -548,6 +548,8 @@ const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
 const ST_COLOR = { verde:'#1d9e75', ambar:'#ef9f27', rojo:'#e24b4a', none:'rgba(255,255,255,0.12)' };
 const fmtN = n => Math.round(n).toLocaleString('es-ES');
 const TODAY_STR = () => new Date().toISOString().slice(0,10);
+const MEALS = ['desayuno','brunch','almuerzo','merienda','cena','otros'];
+const MEAL_LBL = {desayuno:'Desayuno',brunch:'Brunch',almuerzo:'Almuerzo',merienda:'Merienda',cena:'Cena',otros:'Otros'};
 
 function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouchStart, onTouchEnd, D }) {
   const [sel, setSel] = useState(TODAY_STR());
@@ -556,6 +558,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState(null);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [meal, setMeal] = useState('desayuno');
+  const [newOpen, setNewOpen] = useState(false);
 
   if (!D || D.loading) return <div className="empty">Cargando dieta…</div>;
 
@@ -569,7 +573,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const R1=50,R2=36,C1=2*Math.PI*R1,C2=2*Math.PI*R2;
   const calMonthStr = String(calMonth).padStart(2,'0');
 
-  const addTpl = t => D.addEntry({date:sel,meal:t.meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'});
+  const addTpl = t => D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'});
+  const ranked = rankedTemplates(D.templates, D.entries);
 
   const parseFood = async () => {
     if(!foodText.trim())return; setAiBusy(true);
@@ -642,10 +647,21 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         })}
       </div>
 
-      {/* Platos de un toque */}
+      {/* Selector de momento del día */}
       <div className="sl">Añadir · {sel===TODAY_STR()?'hoy':sel}</div>
+      <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:12}}>
+        {MEALS.map(m=>(
+          <button key={m} onClick={()=>setMeal(m)}
+            style={{fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5,padding:'6px 12px',cursor:'pointer',
+              background:meal===m?'rgba(29,158,117,0.15)':'var(--sf)',
+              border:meal===m?`1px solid ${TEAL}`:'1px solid var(--bd2)',
+              color:meal===m?TEAL:'var(--mu3)'}}>{MEAL_LBL[m]}</button>
+        ))}
+      </div>
+
+      {/* Lista de platos ordenada por frecuencia de uso */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-        {D.templates.map(t=>(
+        {ranked.map(t=>(
           <button key={t.id} onClick={()=>addTpl(t)} style={dTpl}>
             <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3}}>
               <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
@@ -654,8 +670,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
             <span style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</span>
           </button>
         ))}
-        <button onClick={()=>setTextOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL}}>
-          <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:16}}>✎</span><span style={{fontSize:13,fontWeight:500}}>Otra (texto)</span></div>
+        <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
         </button>
       </div>
 
@@ -709,6 +725,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         </DModal>
       )}
       {photoOpen && <DPhotoModal onClose={()=>setPhotoOpen(false)} onSave={async(p)=>{await D.addPhoto({...p,date:sel});setPhotoOpen(false);}}/>}
+      {newOpen && <DNewItemModal meal={meal} onClose={()=>setNewOpen(false)}
+        onCreate={async(item)=>{ const t=await D.createTemplate(item); if(t){ await D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'}); } setNewOpen(false); }}/>}
     </div>
   );
 }
@@ -738,6 +756,35 @@ function DPhotoModal({onClose,onSave}){
       <label style={{fontSize:11,opacity:.6}}>Valoración (texto del chat)</label>
       <textarea value={assessment} onChange={e=>setAssessment(e.target.value)} style={{width:'100%',minHeight:60,fontSize:16,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
       <button onClick={()=>onSave({photo_url:url||null,waist_cm:waist?Number(waist):null,weight_kg:weight?Number(weight):null,assessment:assessment||null})} style={{...dPrimary,marginTop:10}}>Guardar</button>
+    </DModal>
+  );
+}
+function DNewItemModal({ meal, onClose, onCreate }) {
+  const [name, setName] = useState('');
+  const [kcal, setKcal] = useState('');
+  const [protein, setProtein] = useState('');
+  const [tier, setTier] = useState('verde');
+  const valid = name.trim() && kcal !== '';
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>NUEVO ELEMENTO</h3>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Se guarda para siempre en tu lista. Las kcal y proteína las sacamos en el chat y las pegas aquí.</p>
+      <DField label="Nombre" value={name} onChange={setName} placeholder="Ej: Ensalada mediodía con pollo frito"/>
+      <div style={{display:'flex',gap:8}}>
+        <DField label="Calorías (kcal)" value={kcal} onChange={setKcal} placeholder="520" type="number"/>
+        <DField label="Proteína (g)" value={protein} onChange={setProtein} placeholder="42" type="number"/>
+      </div>
+      <label style={{fontSize:11,opacity:.6}}>Tipo</label>
+      <div style={{display:'flex',gap:6,margin:'6px 0 14px'}}>
+        {[['verde','Sano'],['goloso','Goloso'],['pecado','Pecado']].map(([v,l])=>(
+          <button key={v} onClick={()=>setTier(v)} style={{flex:1,fontSize:11,padding:'7px 0',cursor:'pointer',
+            background:tier===v?'rgba(255,255,255,0.08)':'transparent',
+            border:tier===v?`1px solid ${TIER_COLOR[v]}`:'1px solid var(--bd2)',
+            color:tier===v?TIER_COLOR[v]:'var(--mu3)'}}>{l}</button>
+        ))}
+      </div>
+      <button disabled={!valid} onClick={()=>onCreate({name:name.trim(),kcal:Number(kcal),protein:Number(protein||0),tier,meal})}
+        style={{...dPrimary,opacity:valid?1:.4,cursor:valid?'pointer':'default'}}>Crear y añadir a {MEAL_LBL[meal]}</button>
     </DModal>
   );
 }

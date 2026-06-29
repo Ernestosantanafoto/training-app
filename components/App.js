@@ -5,6 +5,7 @@ import { fmtDate, fmtShort, getIntensity, BIO_FIELDS, typeColor, isCardioType } 
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import Entrenador from './Entrenador';
 import NuevaSesion from './NuevaSesion';
+import { useNutritionData, dayTotals, dayStatus, calcStreak } from '../lib/useNutritionData';
 
 const PANELS = ['dashboard','prs','bio','diario','entreno'];
 const NAV = [
@@ -38,21 +39,23 @@ function IntensityBars({ level, color }) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────
-function Dashboard({ sessions, onDayClick }) {
+function Dashboard({ sessions, onDayClick, mode, dietData }) {
   const today = new Date();
   const [calYear, setCalYear]   = useState(today.getFullYear());
   const [calMonth, setCalMonth] = useState(today.getMonth()+1);
-  const [exFilter, setExFilter] = useState('');
 
   const calMonthStr = String(calMonth).padStart(2,'0');
   const calPrefix   = `${calYear}-${calMonthStr}`;
   const monthSess   = sessions.filter(s => s?.date?.startsWith(calPrefix));
-  const gym  = monthSess.filter(s => s.type==='gym').length;
-  const run  = monthSess.filter(s => ['run','trail','ultimate','bike','tenis','padel','natacion'].includes(s.type)).length;
-  const hike = monthSess.filter(s => s.type==='senderismo').length;
-  const exMonth = monthSess.flatMap(s => s.exercises||[]);
-  const prB  = Math.max(0, ...exMonth.filter(e => e.n?.toLowerCase().includes('banca')).map(e => e.kg));
-  const prS  = Math.max(0, ...exMonth.filter(e => e.n?.toLowerCase().includes('sentadilla')).map(e => e.kg));
+
+  // Métricas nuevas: total de actividades y días únicos con actividad
+  const totalActs = monthSess.length;
+  const activeDays = new Set(monthSess.map(s => s.date).filter(Boolean)).size;
+
+  // Ranking de actividades del mes (por tipo)
+  const typeCount = {};
+  monthSess.forEach(s => { if(s.type) typeCount[s.type] = (typeCount[s.type]||0)+1; });
+  const ranking = Object.entries(typeCount).sort((a,b) => b[1]-a[1]);
 
   const goMonth = dir => {
     let m = calMonth+dir, y = calYear;
@@ -75,23 +78,20 @@ function Dashboard({ sessions, onDayClick }) {
   const onTouchStart = e => { swipeRef.x = e.touches[0].clientX; };
   const onTouchEnd   = e => { const dx = swipeRef.x - e.changedTouches[0].clientX; if (Math.abs(dx)>40) goMonth(dx>0?1:-1); };
 
-  // Charts
-  const allEx = [...new Set(sessions.flatMap(s => (s.exercises||[]).map(e => e.n).filter(Boolean)))].sort();
-  const exWithData = allEx.filter(name => {
-    const matches = !exFilter || name.toLowerCase().includes(exFilter.toLowerCase());
-    return matches && sessions.some(s => (s.exercises||[]).some(e => e.n===name && e.kg>0));
-  });
+  // ====== MODO DIETA ======
+  if (mode === 'dieta') {
+    return <DietaDashboard calYear={calYear} calMonth={calMonth} calDays={calDays}
+      calTitle={calTitle} goMonth={goMonth} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+      D={dietData} />;
+  }
 
-  // Heatmap
-  const dates = [...new Set(sessions.map(s => s.date).filter(Boolean))].sort().reverse();
-
+  // ====== MODO ENTRENOS ======
   return (
     <div>
-      {/* Metrics */}
-      <div className="mrow" style={{ gridTemplateColumns:'repeat(3,1fr)' }}>
-        <div className="mbox"><div className="mnum" style={{color:'var(--ac)'}}>{gym}</div><div className="mlbl">Gym</div></div>
-        <div className="mbox"><div className="mnum" style={{color:'#e07060'}}>{run}</div><div className="mlbl">Running</div></div>
-        <div className="mbox"><div className="mnum" style={{color:'var(--ac3)'}}>{hike}</div><div className="mlbl">Senderismo</div></div>
+      {/* Métricas: total actividades + días con actividad */}
+      <div className="mrow" style={{ gridTemplateColumns:'repeat(2,1fr)' }}>
+        <div className="mbox"><div className="mnum" style={{color:'var(--ac)'}}>{totalActs}</div><div className="mlbl">Actividades del mes</div></div>
+        <div className="mbox"><div className="mnum" style={{color:'var(--ac)'}}>{activeDays}</div><div className="mlbl">Días con actividad</div></div>
       </div>
 
       {/* Calendar */}
@@ -109,14 +109,10 @@ function Dashboard({ sessions, onDayClick }) {
           const ds = `${calYear}-${calMonthStr}-${String(d).padStart(2,'0')}`;
           if (!ss.length) return <div key={d} style={{aspectRatio:'1',background:'var(--sf)',border:'1px solid var(--bd)',display:'flex',alignItems:'flex-start',justifyContent:'flex-start'}}><span style={{opacity:.2,fontFamily:"'Bebas Neue',sans-serif",fontSize:11,padding:'2px 0 0 3px'}}>{String(d).padStart(2,'0')}</span></div>;
 
-          // ── UNIVERSAL CELL: one horizontal slice per activity ──
           const cardioSess = ss.filter(s => isCardioType(s.type));
-          // Order: gym sessions first (yellow on top), then cardio/sport sessions.
-          // Each session gets an equal-height slice with its own color.
           const gymSess = ss.filter(s => s.type === 'gym');
           const orderedSess = [...gymSess, ...cardioSess];
           const n = orderedSess.length;
-          // Border color = color of the most intense activity that day
           const topSess = [...orderedSess].sort((a,b)=>getIntensity([b])-getIntensity([a]))[0];
           const cellBorder = topSess ? typeColor(topSess.type).border : 'var(--bd)';
 
@@ -143,57 +139,81 @@ function Dashboard({ sessions, onDayClick }) {
         })}
       </div>
 
-
-      {/* Heatmap — eje Y: grupos musculares, eje X: fechas scroll horizontal */}
-      <div className="sl">Mapa de actividad</div>
-      <div style={{overflowX:'auto',marginBottom:20,border:'1px solid var(--bd)',WebkitOverflowScrolling:'touch'}}>
-        <div style={{minWidth: Math.max(300, dates.length * 44 + 72) + 'px'}}>
-          {/* Header row — fechas */}
-          <div style={{display:'flex',borderBottom:'1px solid var(--bd)',position:'sticky',top:0,background:'var(--bg)',zIndex:2}}>
-            <div style={{width:72,flexShrink:0,padding:'6px 8px',fontSize:8,color:'var(--mu)',letterSpacing:1,textTransform:'uppercase',borderRight:'1px solid var(--bd)'}}>Grupo</div>
-            {dates.map(date => {
-              const [,mm,dd] = date.split('-');
-              return (
-                <div key={date} style={{width:40,flexShrink:0,padding:'6px 2px',fontSize:8,color:'var(--mu)',textAlign:'center',letterSpacing:.5,borderRight:'1px solid rgba(255,255,255,0.04)'}}>
-                  {dd}<br/><span style={{fontSize:7,opacity:.6}}>{mm}</span>
+      {/* Ranking de actividades del mes */}
+      <div className="sl">Ranking del mes</div>
+      {ranking.length===0 ? <div className="empty">Sin actividad este mes.</div> : (
+        <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:20}}>
+          {ranking.map(([type,count]) => {
+            const tc = typeColor(type);
+            const maxC = ranking[0][1];
+            const pct = (count/maxC)*100;
+            return (
+              <div key={type} style={{display:'flex',alignItems:'center',gap:10}}>
+                <span style={{width:84,flexShrink:0,fontSize:9,letterSpacing:1,textTransform:'uppercase',color:tc.color}}>{tc.label||type}</span>
+                <div style={{flex:1,height:10,background:'var(--sf)',border:'1px solid var(--bd)',overflow:'hidden'}}>
+                  <div style={{width:`${pct}%`,height:'100%',background:tc.color,opacity:.55}}/>
                 </div>
-              );
-            })}
-          </div>
-          {/* Rows — one per muscle group */}
-          {['Piernas','Pecho','Espalda','Bíceps','Tríceps','Hombros','Cardio'].map(muscle => (
-            <div key={muscle} style={{display:'flex',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-              <div style={{width:72,flexShrink:0,padding:'7px 8px',fontSize:8,color:'var(--mu3)',letterSpacing:1,textTransform:'uppercase',borderRight:'1px solid var(--bd)',display:'flex',alignItems:'center'}}>{muscle.slice(0,5)}</div>
-              {dates.map(date => {
-                const daySessions = sessions.filter(s => s.date===date);
-                const isCardio = muscle==='Cardio';
-                let lvl = 0;
-                let cellColor = '';
-                if (isCardio) {
-                  const cardioS = daySessions.filter(s=>s.type==='run'||s.type==='trail'||s.type==='senderismo'||s.type==='ultimate');
-                  if (cardioS.length) {
-                    lvl = getIntensity(cardioS);
-                    const hasHike = cardioS.some(s=>s.type==='senderismo');
-                    cellColor = hasHike ? 'rgba(71,184,255,0.6)' : '#e07060';
-                  }
-                } else {
-                  const gymS = daySessions.filter(s=>s.type==='gym'&&(s.muscles||[]).includes(muscle));
-                  if (gymS.length) { lvl = getIntensity(gymS); cellColor = 'var(--ac)'; }
-                }
-                const bg = lvl===0 ? 'transparent' : lvl===1 ? cellColor.replace('var(--ac)','rgba(232,255,71,0.15)').replace('#e07060','rgba(224,112,96,0.15)').replace('rgba(71,184,255,0.6)','rgba(71,184,255,0.15)') : lvl===2 ? cellColor.replace('var(--ac)','rgba(232,255,71,0.3)').replace('#e07060','rgba(224,112,96,0.3)').replace('rgba(71,184,255,0.6)','rgba(71,184,255,0.3)') : lvl===3 ? cellColor.replace('var(--ac)','rgba(232,255,71,0.5)').replace('#e07060','rgba(224,112,96,0.5)').replace('rgba(71,184,255,0.6)','rgba(71,184,255,0.5)') : cellColor.replace('var(--ac)','rgba(232,255,71,0.75)').replace('rgba(71,184,255,0.6)','rgba(71,184,255,0.75)');
-                return (
-                  <div key={date} style={{width:40,flexShrink:0,height:32,background:bg,borderRight:'1px solid rgba(255,255,255,0.04)',display:'flex',alignItems:'center',justifyContent:'center',transition:'background .2s'}}>
-                    {lvl>0 && <div style={{width:8,height:8,borderRadius:'50%',background: lvl===4 ? (isCardio?cellColor:'var(--ac)') : 'transparent',border:`1px solid ${lvl>0?(isCardio?cellColor:'var(--ac)'):'transparent'}`,opacity:.9}}/>}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+                <span style={{width:28,textAlign:'right',fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:tc.color}}>{count}</span>
+              </div>
+            );
+          })}
         </div>
-      </div>
+      )}
+    </div>
+  );
+}
 
-      {/* Charts */}
-      <div className="sl">Evolución de carga</div>
+// ── PRs ───────────────────────────────────────────────────────
+function PRs({ sessions }) {
+  const [prFilter, setPrFilter] = useState('');
+  const [exFilter, setExFilter] = useState('');
+  const byEx = {};
+  sessions.forEach(s => {
+    (s.exercises||[]).filter(e => e.n&&e.kg>0).forEach(e => {
+      if (!byEx[e.n]||e.kg>byEx[e.n].kg||(e.kg===byEx[e.n].kg&&(e.r||0)>(byEx[e.n].r||0)))
+        byEx[e.n] = { kg:e.kg, r:e.r, date:s.date };
+    });
+  });
+  const allPRs  = Object.entries(byEx).sort((a,b) => b[1].kg-a[1].kg);
+  const sorted  = allPRs.filter(([name]) => !prFilter||name.toLowerCase().includes(prFilter.toLowerCase()));
+  const topKg   = allPRs[0]?.[1]?.kg || 0;
+
+  // Gráficas de evolución de carga (movidas desde Dashboard)
+  const allEx = [...new Set(sessions.flatMap(s => (s.exercises||[]).map(e => e.n).filter(Boolean)))].sort();
+  const exWithData = allEx.filter(name => {
+    const matches = !exFilter || name.toLowerCase().includes(exFilter.toLowerCase());
+    return matches && sessions.some(s => (s.exercises||[]).some(e => e.n===name && e.kg>0));
+  });
+
+  return (
+    <div>
+      <div className="sl" style={{marginTop:0}}>Récords personales</div>
+      <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:16,border:'1px solid var(--bd2)',background:'var(--sf)'}}>
+        <input className="search-box" style={{border:'none',flex:1,fontSize:16}} placeholder="Filtrar ejercicio..."
+          value={prFilter} onChange={e => setPrFilter(e.target.value)}/>
+        {prFilter && <button onClick={() => setPrFilter('')} style={{background:'none',border:'none',color:'var(--mu3)',cursor:'pointer',padding:'0 12px',fontSize:16}}>✕</button>}
+      </div>
+      {!allPRs.length ? <div className="empty">Sin datos aún.</div> : (
+        <div className="pr-grid">
+          {sorted.map(([name, pr]) => {
+            const pct = topKg > 0 ? (pr.kg/topKg)*100 : 0;
+            const isTop = pr.kg===topKg;
+            return (
+              <div key={name} className={`pr-card${isTop?' top':''}`}>
+                {isTop && <div className="pr-badge">TOP</div>}
+                <div style={{fontSize:8,letterSpacing:1.5,textTransform:'uppercase',color:'var(--mu)',marginBottom:8}}>{name}</div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,lineHeight:1,color:'var(--ac)'}}>{pr.kg}<span style={{fontSize:14,color:'var(--mu)',fontFamily:"'DM Mono',monospace"}}> kg</span></div>
+                {pr.r>0 && <div style={{fontSize:10,color:'var(--mu3)',marginTop:3}}>{pr.r} reps</div>}
+                <div style={{fontSize:8,color:'var(--mu)',marginTop:6}}>{fmtDate(pr.date)}</div>
+                <div style={{height:2,background:'var(--bd)',marginTop:10}}><div style={{height:'100%',width:`${pct}%`,background:'var(--ac)',transition:'width .6s'}}/></div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Gráficas de evolución de carga */}
+      <div className="sl sl-mt">Evolución de carga</div>
       <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:16,border:'1px solid var(--bd2)',background:'var(--sf)'}}>
         <input className="search-box" style={{border:'none',flex:1,fontSize:16}} placeholder="Filtrar ejercicio..."
           value={exFilter} onChange={e => setExFilter(e.target.value)}/>
@@ -227,50 +247,6 @@ function Dashboard({ sessions, onDayClick }) {
           );
         })}
       </div>
-    </div>
-  );
-}
-
-// ── PRs ───────────────────────────────────────────────────────
-function PRs({ sessions }) {
-  const [prFilter, setPrFilter] = useState('');
-  const byEx = {};
-  sessions.forEach(s => {
-    (s.exercises||[]).filter(e => e.n&&e.kg>0).forEach(e => {
-      if (!byEx[e.n]||e.kg>byEx[e.n].kg||(e.kg===byEx[e.n].kg&&(e.r||0)>(byEx[e.n].r||0)))
-        byEx[e.n] = { kg:e.kg, r:e.r, date:s.date };
-    });
-  });
-  const allPRs  = Object.entries(byEx).sort((a,b) => b[1].kg-a[1].kg);
-  const sorted  = allPRs.filter(([name]) => !prFilter||name.toLowerCase().includes(prFilter.toLowerCase()));
-  const topKg   = allPRs[0]?.[1]?.kg || 0;
-
-  return (
-    <div>
-      <div className="sl" style={{marginTop:0}}>Récords personales</div>
-      <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:16,border:'1px solid var(--bd2)',background:'var(--sf)'}}>
-        <input className="search-box" style={{border:'none',flex:1,fontSize:16}} placeholder="Filtrar ejercicio..."
-          value={prFilter} onChange={e => setPrFilter(e.target.value)}/>
-        {prFilter && <button onClick={() => setPrFilter('')} style={{background:'none',border:'none',color:'var(--mu3)',cursor:'pointer',padding:'0 12px',fontSize:16}}>✕</button>}
-      </div>
-      {!allPRs.length ? <div className="empty">Sin datos aún.</div> : (
-        <div className="pr-grid">
-          {sorted.map(([name, pr]) => {
-            const pct = topKg > 0 ? (pr.kg/topKg)*100 : 0;
-            const isTop = pr.kg===topKg;
-            return (
-              <div key={name} className={`pr-card${isTop?' top':''}`}>
-                {isTop && <div className="pr-badge">TOP</div>}
-                <div style={{fontSize:8,letterSpacing:1.5,textTransform:'uppercase',color:'var(--mu)',marginBottom:8}}>{name}</div>
-                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,lineHeight:1,color:'var(--ac)'}}>{pr.kg}<span style={{fontSize:14,color:'var(--mu)',fontFamily:"'DM Mono',monospace"}}> kg</span></div>
-                {pr.r>0 && <div style={{fontSize:10,color:'var(--mu3)',marginTop:3}}>{pr.r} reps</div>}
-                <div style={{fontSize:8,color:'var(--mu)',marginTop:6}}>{fmtDate(pr.date)}</div>
-                <div style={{height:2,background:'var(--bd)',marginTop:10}}><div style={{height:'100%',width:`${pct}%`,background:'var(--ac)',transition:'width .6s'}}/></div>
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -566,12 +542,225 @@ function EntrenoHub({ onSessionComplete, onSave }) {
   );
 }
 
+// ── DietaDashboard (modo dieta, acento teal) ──────────────────
+const TEAL = '#1d9e75';
+const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
+const ST_COLOR = { verde:'#1d9e75', ambar:'#ef9f27', rojo:'#e24b4a', none:'rgba(255,255,255,0.12)' };
+const fmtN = n => Math.round(n).toLocaleString('es-ES');
+const TODAY_STR = () => new Date().toISOString().slice(0,10);
+
+function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouchStart, onTouchEnd, D }) {
+  const [sel, setSel] = useState(TODAY_STR());
+  const [textOpen, setTextOpen] = useState(false);
+  const [foodText, setFoodText] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiPreview, setAiPreview] = useState(null);
+  const [photoOpen, setPhotoOpen] = useState(false);
+
+  if (!D || D.loading) return <div className="empty">Cargando dieta…</div>;
+
+  const kcalTarget = D.target.kcal_target || 2800;
+  const protTarget = D.target.protein_target || 160;
+  const totals = dayTotals(D.entries, sel);
+  const streak = calcStreak(D.entries);
+  const kcalPct = Math.min(100,(totals.kcal/kcalTarget)*100);
+  const protPct = Math.min(100,(totals.protein/protTarget)*100);
+  const kcalLeft = Math.max(0,kcalTarget-totals.kcal);
+  const R1=50,R2=36,C1=2*Math.PI*R1,C2=2*Math.PI*R2;
+  const calMonthStr = String(calMonth).padStart(2,'0');
+
+  const addTpl = t => D.addEntry({date:sel,meal:t.meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'});
+
+  const parseFood = async () => {
+    if(!foodText.trim())return; setAiBusy(true);
+    try{
+      const r=await fetch('/api/nutrition',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:foodText})});
+      const data=await r.json();
+      if(data.items&&data.items.length)setAiPreview(data);
+    }catch(e){} finally{setAiBusy(false);}
+  };
+  const confirmAi = async () => {
+    if(!aiPreview?.items)return;
+    await D.addEntriesBatch(aiPreview.items.map(i=>({...i,date:sel,source:'texto'})));
+    setAiPreview(null);setFoodText('');setTextOpen(false);
+  };
+
+  const lastPhoto = D.photos[0];
+  const daysSince = lastPhoto ? Math.floor((Date.now()-new Date(lastPhoto.date).getTime())/86400000) : 99;
+
+  return (
+    <div>
+      {/* anillo + racha */}
+      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
+        <span style={{display:'flex',alignItems:'center',gap:6,background:'rgba(239,159,39,0.12)',color:'#ef9f27',padding:'5px 12px',borderRadius:20,fontSize:13,fontFamily:"'DM Mono',monospace"}}>🔥 {streak} {streak===1?'día':'días'}</span>
+      </div>
+      <div style={{background:'rgba(29,158,117,0.06)',border:'1px solid rgba(29,158,117,0.25)',borderRadius:14,padding:16,marginBottom:14,display:'flex',alignItems:'center',gap:16}}>
+        <div style={{position:'relative',width:108,height:108,flexShrink:0}}>
+          <svg viewBox="0 0 120 120" width="108" height="108">
+            <circle cx="60" cy="60" r={R1} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="11"/>
+            <circle cx="60" cy="60" r={R1} fill="none" stroke="#378add" strokeWidth="11" strokeLinecap="round" strokeDasharray={C1} strokeDashoffset={C1*(1-kcalPct/100)} transform="rotate(-90 60 60)"/>
+            <circle cx="60" cy="60" r={R2} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="11"/>
+            <circle cx="60" cy="60" r={R2} fill="none" stroke={TEAL} strokeWidth="11" strokeLinecap="round" strokeDasharray={C2} strokeDashoffset={C2*(1-protPct/100)} transform="rotate(-90 60 60)"/>
+          </svg>
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+            <span style={{fontSize:20,fontFamily:"'Bebas Neue',sans-serif",lineHeight:1}}>{fmtN(totals.kcal)}</span>
+            <span style={{fontSize:10,opacity:.5}}>de {fmtN(kcalTarget)}</span>
+          </div>
+        </div>
+        <div style={{flex:1,display:'flex',flexDirection:'column',gap:11}}>
+          <DBar label="Calorías" color="#378add" cur={totals.kcal} max={kcalTarget} right={`${fmtN(kcalLeft)} rest.`}/>
+          <DBar label="Proteína" color={TEAL} cur={totals.protein} max={protTarget} right={`${Math.round(totals.protein)}/${protTarget} g`}/>
+          {sel!==TODAY_STR() && <button onClick={()=>setSel(TODAY_STR())} style={dMini}>← volver a hoy</button>}
+        </div>
+      </div>
+
+      {/* Calendar (mismo, coloreado por cumplimiento) */}
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+        <button onClick={()=>goMonth(-1)} style={{background:'none',border:'none',color:'var(--mu)',cursor:'pointer',fontSize:18,padding:'0 4px'}}>‹</button>
+        <div className="sl" style={{flex:1,marginBottom:0}}>{calTitle}</div>
+        <button onClick={()=>goMonth(1)} style={{background:'none',border:'none',color:'var(--mu)',cursor:'pointer',fontSize:18,padding:'0 4px'}}>›</button>
+      </div>
+      <div style={{display:'flex',gap:10,fontSize:10,opacity:.6,marginBottom:8,justifyContent:'flex-end'}}>
+        <DLg c={TEAL} t="objetivo"/><DLg c="#ef9f27" t="cerca"/><DLg c="#e24b4a" t="lejos"/>
+      </div>
+      <div className="cal" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{marginBottom:20}}>
+        {['L','M','X','J','V','S','D'].map(d=><div key={d} className="ch">{d}</div>)}
+        {calDays.map((cell,i)=>{
+          if(!cell)return <div key={i} style={{aspectRatio:'1',background:'var(--sf)',border:'1px solid var(--bd)'}}/>;
+          const {d}=cell;
+          const ds=`${calYear}-${calMonthStr}-${String(d).padStart(2,'0')}`;
+          const t=dayTotals(D.entries,ds);
+          const st=dayStatus(t.kcal,kcalTarget);
+          const isSel=ds===sel;
+          return (
+            <button key={d} onClick={()=>setSel(ds)}
+              style={{aspectRatio:'1',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,background:isSel?'rgba(29,158,117,0.15)':'var(--sf)',border:isSel?`1px solid ${TEAL}`:'1px solid var(--bd)',cursor:'pointer',padding:0,width:'100%'}}>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:11,opacity:st==='none'?.3:.85,color:isSel?TEAL:'var(--tx)'}}>{String(d).padStart(2,'0')}</span>
+              <span style={{width:6,height:6,borderRadius:'50%',background:ST_COLOR[st]}}/>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Platos de un toque */}
+      <div className="sl">Añadir · {sel===TODAY_STR()?'hoy':sel}</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+        {D.templates.map(t=>(
+          <button key={t.id} onClick={()=>addTpl(t)} style={dTpl}>
+            <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3}}>
+              <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
+              <span style={{fontSize:13,fontWeight:500}}>{t.name}</span>
+            </div>
+            <span style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</span>
+          </button>
+        ))}
+        <button onClick={()=>setTextOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL}}>
+          <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:16}}>✎</span><span style={{fontSize:13,fontWeight:500}}>Otra (texto)</span></div>
+        </button>
+      </div>
+
+      {/* lista del día */}
+      {totals.items.length>0 && (
+        <div style={{marginBottom:14}}>
+          {totals.items.map(it=>(
+            <div key={it.id} style={dRow}>
+              <span style={{flex:1,fontSize:13}}>{it.name}</span>
+              <span style={{fontSize:12,opacity:.6,marginRight:10}}>{it.kcal} · {Math.round(it.protein)}g</span>
+              <button onClick={()=>D.deleteEntry(it.id)} style={dDel}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Album de progreso */}
+      <div className="sl">Progreso · foto y cintura</div>
+      <div style={{background:'var(--sf)',border:'1px solid var(--bd)',padding:12,marginBottom:20}}>
+        <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}>
+          <button onClick={()=>setPhotoOpen(true)} style={dMini}>+ añadir</button>
+        </div>
+        {daysSince>=14 && <div style={{fontSize:11,color:TEAL,marginBottom:10}}>⏰ Toca foto quincenal {lastPhoto?`(última hace ${daysSince} días)`:'(primera)'}</div>}
+        {D.photos.length===0 && <p style={{fontSize:11,opacity:.4,margin:0}}>Aún sin fotos. Añade la primera para empezar tu tira de progreso.</p>}
+        <div style={{display:'flex',gap:8,overflowX:'auto'}}>
+          {D.photos.map(p=>(
+            <div key={p.id} style={{minWidth:90,flexShrink:0}}>
+              {p.photo_url
+                ? <img src={p.photo_url} alt={p.date} style={{width:90,height:120,objectFit:'cover',border:'1px solid rgba(255,255,255,0.1)'}}/>
+                : <div style={{width:90,height:120,background:'rgba(255,255,255,0.05)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,opacity:.4}}>sin foto</div>}
+              <div style={{fontSize:9,opacity:.6,marginTop:4}}>{p.date}{p.waist_cm?` · ${p.waist_cm}cm`:''}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {textOpen && (
+        <DModal onClose={()=>{setTextOpen(false);setAiPreview(null);}}>
+          <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 10px'}}>AÑADIR COMIDA</h3>
+          <textarea value={foodText} onChange={e=>setFoodText(e.target.value)} placeholder="Ej: 200g de salmón con una taza de arroz y ensalada"
+            style={{width:'100%',minHeight:80,fontSize:16,padding:10,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
+          {!aiPreview && <button onClick={parseFood} disabled={aiBusy} style={{...dPrimary,marginTop:10,opacity:aiBusy?.5:1}}>{aiBusy?'Analizando…':'Analizar con IA'}</button>}
+          {aiPreview && (
+            <div style={{marginTop:12}}>
+              {aiPreview.items.map((i,k)=>(<div key={k} style={dRow}><span style={{flex:1,fontSize:13}}>{i.name}</span><span style={{fontSize:12,opacity:.6}}>{i.kcal} · {Math.round(i.protein)}g</span></div>))}
+              <div style={{fontSize:12,opacity:.7,margin:'8px 0',textAlign:'right'}}>Total: {fmtN(aiPreview.total_kcal)} kcal · {Math.round(aiPreview.total_protein)} g</div>
+              {aiPreview.note && <div style={{fontSize:11,color:TEAL,marginBottom:8}}>{aiPreview.note}</div>}
+              <div style={{display:'flex',gap:8}}><button onClick={confirmAi} style={dPrimary}>Añadir al día</button><button onClick={()=>setAiPreview(null)} style={dMini}>Reintentar</button></div>
+            </div>
+          )}
+        </DModal>
+      )}
+      {photoOpen && <DPhotoModal onClose={()=>setPhotoOpen(false)} onSave={async(p)=>{await D.addPhoto({...p,date:sel});setPhotoOpen(false);}}/>}
+    </div>
+  );
+}
+
+function DBar({label,color,cur,max,right}) {
+  const pct=Math.min(100,(cur/max)*100);
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}><span style={{color}}>{label}</span><span style={{opacity:.6}}>{right}</span></div>
+      <div style={{height:6,background:'rgba(255,255,255,0.08)',borderRadius:3,overflow:'hidden'}}><div style={{width:`${pct}%`,height:'100%',background:color,borderRadius:3}}/></div>
+    </div>
+  );
+}
+const DLg=({c,t})=><span style={{display:'flex',alignItems:'center',gap:3}}><span style={{width:7,height:7,borderRadius:'50%',background:c}}/>{t}</span>;
+function DModal({children,onClose}){return <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:'#1a1a19',border:'1px solid rgba(255,255,255,0.12)',padding:18,maxWidth:360,width:'100%'}}>{children}</div></div>;}
+function DPhotoModal({onClose,onSave}){
+  const [waist,setWaist]=useState('');const [weight,setWeight]=useState('');const [assessment,setAssessment]=useState('');const [url,setUrl]=useState('');
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 10px'}}>FOTO DE PROGRESO</h3>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Sube la foto a Supabase Storage (bucket 'progreso') y pega su URL. La valoración la generas en el chat y la pegas abajo.</p>
+      <DField label="URL foto" value={url} onChange={setUrl} placeholder="https://…/progreso/..."/>
+      <div style={{display:'flex',gap:8}}>
+        <DField label="Cintura (cm)" value={waist} onChange={setWaist} placeholder="84" type="number"/>
+        <DField label="Peso (kg)" value={weight} onChange={setWeight} placeholder="83.7" type="number"/>
+      </div>
+      <label style={{fontSize:11,opacity:.6}}>Valoración (texto del chat)</label>
+      <textarea value={assessment} onChange={e=>setAssessment(e.target.value)} style={{width:'100%',minHeight:60,fontSize:16,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
+      <button onClick={()=>onSave({photo_url:url||null,waist_cm:waist?Number(waist):null,weight_kg:weight?Number(weight):null,assessment:assessment||null})} style={{...dPrimary,marginTop:10}}>Guardar</button>
+    </DModal>
+  );
+}
+const DField=({label,value,onChange,placeholder,type='text'})=>(
+  <div style={{flex:1,marginBottom:10}}>
+    <label style={{fontSize:11,opacity:.6}}>{label}</label>
+    <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',fontSize:16,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
+  </div>
+);
+const dTpl={background:'var(--sf)',border:'1px solid var(--bd2)',padding:11,textAlign:'left',color:'inherit',cursor:'pointer'};
+const dRow={display:'flex',alignItems:'center',padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'};
+const dDel={background:'none',border:'none',color:'#e24b4a',fontSize:18,cursor:'pointer',padding:'0 4px'};
+const dMini={background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',padding:'5px 10px',fontSize:11,color:'inherit',cursor:'pointer'};
+const dPrimary={flex:1,background:TEAL,border:'none',padding:'10px 14px',fontSize:14,fontWeight:500,color:'#06241b',cursor:'pointer'};
+
 // ── App root ──────────────────────────────────────────────────
 export default function App() {
   const [panel, setPanel]           = useState('dashboard');
   const [focusDate, setFocusDate]   = useState(null);
   const [showMigrate, setShowMigrate] = useState(false);
+  const [dashMode, setDashMode] = useState('entrenos');
   const data = useTrainingData();
+  const dietData = useNutritionData();
 
   const handleDayClick = date => { setFocusDate(date); setPanel('diario'); };
   const goToPanel = p => { setPanel(p); if (p!=='diario') setFocusDate(null); };
@@ -633,7 +822,13 @@ export default function App() {
         {needsMigration && <MigrateBanner onDone={data.load}/>}
         {data.error && <div style={{fontSize:10,color:'var(--ac2)',marginBottom:16,padding:'8px 12px',border:'1px solid rgba(255,71,71,.2)'}}>⚠ Error conectando con Supabase: {data.error}</div>}
 
-        {panel==='dashboard' && <Dashboard sessions={data.sessions} onDayClick={handleDayClick}/>}
+        {panel==='dashboard' && <>
+          <div className="diary-tabs" style={{marginBottom:20}}>
+            <div className={`diary-tab${dashMode==='entrenos'?' active':''}`} onClick={()=>setDashMode('entrenos')}>Entrenos</div>
+            <div className={`diary-tab${dashMode==='dieta'?' active dieta-tab':''}`} onClick={()=>setDashMode('dieta')} style={dashMode==='dieta'?{color:'#1d9e75',borderColor:'#1d9e75'}:{}}>Dieta</div>
+          </div>
+          <Dashboard sessions={data.sessions} onDayClick={handleDayClick} mode={dashMode} dietData={dietData}/>
+        </>}
         {panel==='prs'       && <PRs sessions={data.sessions}/>}
         {panel==='bio'       && <Biometria bios={data.bios} addBio={data.addBio}/>}
         {panel==='diario'    && <Diario diary={data.diary} raw={data.raw} sessions={data.sessions} focusDate={focusDate} onClearFocus={()=>setFocusDate(null)} onDelete={data.deleteSession} onDeleteDiary={data.deleteDiary} onDeleteRaw={data.deleteRaw}/>}

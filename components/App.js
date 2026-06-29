@@ -560,13 +560,15 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const [photoOpen, setPhotoOpen] = useState(false);
   const [meal, setMeal] = useState('desayuno');
   const [newOpen, setNewOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [pantryOpen, setPantryOpen] = useState(false);
 
   if (!D || D.loading) return <div className="empty">Cargando dieta…</div>;
 
   const kcalTarget = D.target.kcal_target || 2800;
   const protTarget = D.target.protein_target || 160;
   const totals = dayTotals(D.entries, sel);
-  const streak = calcStreak(D.entries);
+  const streak = calcStreak(D.entries, D.freeDays);
   const kcalPct = Math.min(100,(totals.kcal/kcalTarget)*100);
   const protPct = Math.min(100,(totals.protein/protTarget)*100);
   const kcalLeft = Math.max(0,kcalTarget-totals.kcal);
@@ -575,6 +577,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
 
   const addTpl = t => D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'});
   const ranked = rankedTemplates(D.templates, D.entries);
+  const freeSet = new Set((D.freeDays||[]).map(f=>f.date));
+  const selIsFree = freeSet.has(sel);
 
   const parseFood = async () => {
     if(!foodText.trim())return; setAiBusy(true);
@@ -619,6 +623,12 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         </div>
       </div>
 
+      {/* Día libre toggle */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,padding:'8px 12px',background:selIsFree?'rgba(255,255,255,0.04)':'transparent',border:selIsFree?'1px solid var(--bd2)':'1px solid transparent'}}>
+        <span style={{fontSize:11,color:selIsFree?'var(--mu)':'var(--mu3)'}}>{selIsFree?'Día libre — no se mide (mantiene racha)':'¿Hoy comes fuera y no mides?'}</span>
+        <button onClick={()=>D.setFreeDay(sel,!selIsFree)} style={{...dMini,borderColor:selIsFree?TEAL:'var(--bd2)',color:selIsFree?TEAL:'var(--mu3)'}}>{selIsFree?'✓ libre':'marcar libre'}</button>
+      </div>
+
       {/* Calendar (mismo, coloreado por cumplimiento) */}
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
         <button onClick={()=>goMonth(-1)} style={{background:'none',border:'none',color:'var(--mu)',cursor:'pointer',fontSize:18,padding:'0 4px'}}>‹</button>
@@ -626,7 +636,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         <button onClick={()=>goMonth(1)} style={{background:'none',border:'none',color:'var(--mu)',cursor:'pointer',fontSize:18,padding:'0 4px'}}>›</button>
       </div>
       <div style={{display:'flex',gap:10,fontSize:10,opacity:.6,marginBottom:8,justifyContent:'flex-end'}}>
-        <DLg c={TEAL} t="objetivo"/><DLg c="#ef9f27" t="cerca"/><DLg c="#e24b4a" t="lejos"/>
+        <DLg c={TEAL} t="objetivo"/><DLg c="#ef9f27" t="cerca"/><DLg c="#e24b4a" t="lejos"/><DLg c="var(--mu2)" t="libre"/>
       </div>
       <div className="cal" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{marginBottom:20}}>
         {['L','M','X','J','V','S','D'].map(d=><div key={d} className="ch">{d}</div>)}
@@ -635,13 +645,19 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
           const {d}=cell;
           const ds=`${calYear}-${calMonthStr}-${String(d).padStart(2,'0')}`;
           const t=dayTotals(D.entries,ds);
-          const st=dayStatus(t.kcal,kcalTarget);
+          const isFree=freeSet.has(ds);
+          const hasEst=t.items.some(it=>it.estimated);
+          const st=isFree?'free':dayStatus(t.kcal,kcalTarget);
           const isSel=ds===sel;
+          const dotColor=st==='free'?'var(--mu2)':ST_COLOR[st];
           return (
             <button key={d} onClick={()=>setSel(ds)}
-              style={{aspectRatio:'1',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,background:isSel?'rgba(29,158,117,0.15)':'var(--sf)',border:isSel?`1px solid ${TEAL}`:'1px solid var(--bd)',cursor:'pointer',padding:0,width:'100%'}}>
-              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:11,opacity:st==='none'?.3:.85,color:isSel?TEAL:'var(--tx)'}}>{String(d).padStart(2,'0')}</span>
-              <span style={{width:6,height:6,borderRadius:'50%',background:ST_COLOR[st]}}/>
+              style={{aspectRatio:'1',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,background:isSel?'rgba(29,158,117,0.15)':isFree?'rgba(255,255,255,0.02)':'var(--sf)',border:isSel?`1px solid ${TEAL}`:'1px solid var(--bd)',cursor:'pointer',padding:0,width:'100%',position:'relative'}}>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:11,opacity:(st==='none')?.3:.85,color:isSel?TEAL:'var(--tx)'}}>{String(d).padStart(2,'0')}</span>
+              {st==='free'
+                ? <span style={{fontSize:8,color:'var(--mu)',lineHeight:1}}>libre</span>
+                : <span style={{width:6,height:6,borderRadius:'50%',background:dotColor}}/>}
+              {hasEst && !isFree && <span style={{position:'absolute',top:1,right:3,fontSize:8,color:TEAL,opacity:.8}}>~</span>}
             </button>
           );
         })}
@@ -660,20 +676,31 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
       </div>
 
       {/* Lista de platos ordenada por frecuencia de uso */}
+      <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginBottom:6}}>
+        <button onClick={()=>setPantryOpen(true)} style={dMini}>🥫 Despensa</button>
+        <button onClick={()=>setEditMode(v=>!v)} style={{...dMini,borderColor:editMode?TEAL:'var(--bd2)',color:editMode?TEAL:'var(--mu3)'}}>{editMode?'✓ listo':'editar lista'}</button>
+      </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
         {ranked.map(t=>(
-          <button key={t.id} onClick={()=>addTpl(t)} style={dTpl}>
-            <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3}}>
-              <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
-              <span style={{fontSize:13,fontWeight:500}}>{t.name}</span>
-            </div>
-            <span style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</span>
-          </button>
+          <div key={t.id} style={{position:'relative'}}>
+            <button onClick={()=>editMode?null:addTpl(t)} style={{...dTpl,width:'100%',opacity:editMode?.6:1}}>
+              <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
+                <span style={{fontSize:13,fontWeight:500}}>{t.name}{t.estimated?' ~':''}</span>
+              </div>
+              <span style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</span>
+            </button>
+            {editMode && t.user_created && (
+              <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'" de tu lista?')) D.deleteTemplate(t.id); }}
+                style={{position:'absolute',top:-6,right:-6,width:22,height:22,borderRadius:'50%',background:'#e24b4a',border:'none',color:'#fff',fontSize:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>×</button>
+            )}
+          </div>
         ))}
         <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
         </button>
       </div>
+      {editMode && <p style={{fontSize:10,opacity:.4,margin:'0 0 10px'}}>Solo puedes borrar los elementos que tú has creado. Los de fábrica se quedan.</p>}
 
       {/* lista del día */}
       {totals.items.length>0 && (
@@ -726,7 +753,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
       )}
       {photoOpen && <DPhotoModal onClose={()=>setPhotoOpen(false)} onSave={async(p)=>{await D.addPhoto({...p,date:sel});setPhotoOpen(false);}}/>}
       {newOpen && <DNewItemModal meal={meal} onClose={()=>setNewOpen(false)}
-        onCreate={async(item)=>{ const t=await D.createTemplate(item); if(t){ await D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'}); } setNewOpen(false); }}/>}
+        onCreate={async(item,addToday)=>{ const t=await D.createTemplate(item); if(t&&addToday){ await D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:item.estimated}); } setNewOpen(false); }}/>}
+      {pantryOpen && <DPantryModal D={D} onClose={()=>setPantryOpen(false)}/>}
     </div>
   );
 }
@@ -759,16 +787,62 @@ function DPhotoModal({onClose,onSave}){
     </DModal>
   );
 }
+// parsea el texto que devuelve el prompt nutricional del chat
+function parseNutriPaste(text) {
+  if (!text) return null;
+  const get = (re) => { const m = text.match(re); return m ? m[1].trim() : null; };
+  const name = get(/nombre\s*:\s*(.+)/i);
+  const kcalRaw = get(/calor[ií]as?\s*:\s*([\d.,]+)/i);
+  const protRaw = get(/prote[ií]na\s*:\s*([\d.,]+)/i);
+  const tierRaw = get(/tipo\s*:\s*(\w+)/i);
+  if (!name && !kcalRaw) return null;
+  let tier = 'verde';
+  if (tierRaw) {
+    const t = tierRaw.toLowerCase();
+    if (t.startsWith('golos')) tier = 'goloso';
+    else if (t.startsWith('pecad')) tier = 'pecado';
+    else tier = 'verde';
+  }
+  return {
+    name: name || '',
+    kcal: kcalRaw ? Number(kcalRaw.replace(',', '.')) : '',
+    protein: protRaw ? Number(protRaw.replace(',', '.')) : '',
+    tier,
+  };
+}
+
 function DNewItemModal({ meal, onClose, onCreate }) {
   const [name, setName] = useState('');
   const [kcal, setKcal] = useState('');
   const [protein, setProtein] = useState('');
   const [tier, setTier] = useState('verde');
+  const [estimated, setEstimated] = useState(false);
+  const [paste, setPaste] = useState('');
   const valid = name.trim() && kcal !== '';
+
+  const applyPaste = () => {
+    const p = parseNutriPaste(paste);
+    if (p) {
+      if (p.name) setName(p.name);
+      if (p.kcal !== '') setKcal(String(p.kcal));
+      if (p.protein !== '') setProtein(String(p.protein));
+      if (p.tier) setTier(p.tier);
+    }
+  };
+
+  const build = () => ({name:name.trim(),kcal:Number(kcal),protein:Number(protein||0),tier,meal,estimated});
+
   return (
     <DModal onClose={onClose}>
       <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>NUEVO ELEMENTO</h3>
-      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Se guarda para siempre en tu lista. Las kcal y proteína las sacamos en el chat y las pegas aquí.</p>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Pega lo que te devuelve el chat, o rellena a mano.</p>
+
+      {/* Pegar copy-paste del prompt */}
+      <label style={{fontSize:11,opacity:.6}}>Pegar del chat</label>
+      <textarea value={paste} onChange={e=>setPaste(e.target.value)} placeholder={"Nombre: ...\\nCalorías: ... kcal\\nProteína: ... g\\nTipo: ..."}
+        style={{width:'100%',minHeight:56,fontSize:14,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
+      <button onClick={applyPaste} style={{...dMini,margin:'6px 0 14px',borderColor:TEAL,color:TEAL}}>↡ Rellenar campos desde el texto</button>
+
       <DField label="Nombre" value={name} onChange={setName} placeholder="Ej: Ensalada mediodía con pollo frito"/>
       <div style={{display:'flex',gap:8}}>
         <DField label="Calorías (kcal)" value={kcal} onChange={setKcal} placeholder="520" type="number"/>
@@ -783,11 +857,81 @@ function DNewItemModal({ meal, onClose, onCreate }) {
             color:tier===v?TIER_COLOR[v]:'var(--mu3)'}}>{l}</button>
         ))}
       </div>
-      <button disabled={!valid} onClick={()=>onCreate({name:name.trim(),kcal:Number(kcal),protein:Number(protein||0),tier,meal})}
-        style={{...dPrimary,opacity:valid?1:.4,cursor:valid?'pointer':'default'}}>Crear y añadir a {MEAL_LBL[meal]}</button>
+      <label onClick={()=>setEstimated(v=>!v)} style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:estimated?TEAL:'var(--mu3)',cursor:'pointer',margin:'0 0 14px'}}>
+        <span style={{width:18,height:18,border:`1px solid ${estimated?TEAL:'var(--bd2)'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,color:TEAL}}>{estimated?'✓':''}</span>
+        Estimación al alza (comida no medida al gramo)
+      </label>
+
+      {/* Dos botones: solo despensa / guardar y añadir a hoy */}
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        <button disabled={!valid} onClick={()=>onCreate(build(), true)}
+          style={{...dPrimary,opacity:valid?1:.4,cursor:valid?'pointer':'default'}}>Guardar y añadir a {MEAL_LBL[meal]}</button>
+        <button disabled={!valid} onClick={()=>onCreate(build(), false)}
+          style={{...dMini,padding:'10px 14px',opacity:valid?1:.4,cursor:valid?'pointer':'default',borderColor:'var(--bd2)'}}>Solo guardar en despensa</button>
+      </div>
     </DModal>
   );
 }
+function DPantryModal({ D, onClose }) {
+  const [editId, setEditId] = useState(null);
+  const [f, setF] = useState({});
+  const [q, setQ] = useState('');
+
+  const startEdit = (t) => { setEditId(t.id); setF({name:t.name,kcal:String(t.kcal),protein:String(t.protein),tier:t.tier}); };
+  const save = async () => {
+    await D.updateTemplate(editId, {name:f.name,kcal:Number(f.kcal),protein:Number(f.protein||0),tier:f.tier});
+    setEditId(null);
+  };
+  const items = [...(D.templates||[])]
+    .filter(t => !q || (t.name||'').toLowerCase().includes(q.toLowerCase()))
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>DESPENSA</h3>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Todos tus alimentos. Edita o elimina (solo se pueden borrar los que tú creaste).</p>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar…"
+        style={{width:'100%',fontSize:16,padding:8,marginBottom:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
+      <div style={{maxHeight:'50vh',overflowY:'auto'}}>
+        {items.length===0 && <p style={{fontSize:12,opacity:.4}}>Sin alimentos.</p>}
+        {items.map(t=>(
+          <div key={t.id} style={{padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+            {editId===t.id ? (
+              <div>
+                <input value={f.name} onChange={e=>setF({...f,name:e.target.value})} style={dPInput}/>
+                <div style={{display:'flex',gap:6,marginTop:6}}>
+                  <input value={f.kcal} onChange={e=>setF({...f,kcal:e.target.value})} type="number" placeholder="kcal" style={{...dPInput,flex:1}}/>
+                  <input value={f.protein} onChange={e=>setF({...f,protein:e.target.value})} type="number" placeholder="prot" style={{...dPInput,flex:1}}/>
+                </div>
+                <div style={{display:'flex',gap:6,margin:'6px 0'}}>
+                  {[['verde','Sano'],['goloso','Goloso'],['pecado','Pecado']].map(([v,l])=>(
+                    <button key={v} onClick={()=>setF({...f,tier:v})} style={{flex:1,fontSize:10,padding:'5px 0',cursor:'pointer',background:f.tier===v?'rgba(255,255,255,0.08)':'transparent',border:f.tier===v?`1px solid ${TIER_COLOR[v]}`:'1px solid var(--bd2)',color:f.tier===v?TIER_COLOR[v]:'var(--mu3)'}}>{l}</button>
+                  ))}
+                </div>
+                <div style={{display:'flex',gap:6}}>
+                  <button onClick={save} style={{...dPrimary,padding:'7px 10px',fontSize:12}}>Guardar</button>
+                  <button onClick={()=>setEditId(null)} style={{...dMini}}>Cancelar</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.name}{t.estimated?' ~':''}</div>
+                  <div style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g{t.user_created?'':' · fábrica'}</div>
+                </div>
+                <button onClick={()=>startEdit(t)} style={{...dMini,padding:'4px 8px'}}>editar</button>
+                {t.user_created && <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'"?')) D.deleteTemplate(t.id); }} style={{...dMini,padding:'4px 8px',borderColor:'rgba(226,75,74,0.4)',color:'#e24b4a'}}>×</button>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <button onClick={onClose} style={{...dMini,width:'100%',marginTop:12,padding:'10px'}}>Cerrar</button>
+    </DModal>
+  );
+}
+const dPInput={width:'100%',fontSize:15,padding:7,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'};
 const DField=({label,value,onChange,placeholder,type='text'})=>(
   <div style={{flex:1,marginBottom:10}}>
     <label style={{fontSize:11,opacity:.6}}>{label}</label>

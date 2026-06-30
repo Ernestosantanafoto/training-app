@@ -7,6 +7,18 @@ import Entrenador from './Entrenador';
 import NuevaSesion from './NuevaSesion';
 import { useNutritionData, dayTotals, dayStatus, calcStreak, rankedTemplates } from '../lib/useNutritionData';
 
+// ── Persistencia de UI (localStorage, seguro en navegador real) ──
+function loadUI(key, fallback) {
+  if (typeof window === 'undefined') return fallback;
+  try { const v = window.localStorage.getItem('ui_'+key); return v===null ? fallback : JSON.parse(v); }
+  catch { return fallback; }
+}
+function saveUI(key, val) {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem('ui_'+key, JSON.stringify(val)); } catch {}
+}
+
+
 const PANELS = ['dashboard','prs','bio','diario','entreno'];
 const NAV = [
   { icon:'◈', lbl:'Dashboard' },
@@ -558,10 +570,12 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState(null);
   const [photoOpen, setPhotoOpen] = useState(false);
-  const [meal, setMeal] = useState('desayuno');
+  const [meal, setMeal] = useState(() => loadUI('meal','desayuno'));
   const [newOpen, setNewOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [pantryOpen, setPantryOpen] = useState(false);
+  const [qty, setQty] = useState(1);
+  const [dayPopup, setDayPopup] = useState(null);
 
   if (!D || D.loading) return <div className="empty">Cargando dieta…</div>;
 
@@ -575,10 +589,11 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const R1=50,R2=36,C1=2*Math.PI*R1,C2=2*Math.PI*R2;
   const calMonthStr = String(calMonth).padStart(2,'0');
 
-  const addTpl = t => D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla'});
+  const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
   const ranked = rankedTemplates(D.templates, D.entries);
   const freeSet = new Set((D.freeDays||[]).map(f=>f.date));
   const selIsFree = freeSet.has(sel);
+  useEffect(() => { saveUI('meal', meal); }, [meal]);
 
   const parseFood = async () => {
     if(!foodText.trim())return; setAiBusy(true);
@@ -650,14 +665,23 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
           const st=isFree?'free':dayStatus(t.kcal,kcalTarget);
           const isSel=ds===sel;
           const dotColor=st==='free'?'var(--mu2)':ST_COLOR[st];
+          const kPct=Math.min(100,(t.kcal/kcalTarget)*100);
+          const pPct=Math.min(100,(t.protein/protTarget)*100);
+          const hasData=t.items.length>0;
           return (
-            <button key={d} onClick={()=>setSel(ds)}
-              style={{aspectRatio:'1',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,background:isSel?'rgba(29,158,117,0.15)':isFree?'rgba(255,255,255,0.02)':'var(--sf)',border:isSel?`1px solid ${TEAL}`:'1px solid var(--bd)',cursor:'pointer',padding:0,width:'100%',position:'relative'}}>
+            <button key={d} onClick={()=>{ setSel(ds); setDayPopup(ds); }}
+              style={{aspectRatio:'1',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,background:isSel?'rgba(29,158,117,0.15)':isFree?'rgba(255,255,255,0.02)':'var(--sf)',border:isSel?`1px solid ${TEAL}`:'1px solid var(--bd)',cursor:'pointer',padding:0,width:'100%',position:'relative',overflow:'hidden'}}>
               <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:11,opacity:(st==='none')?.3:.85,color:isSel?TEAL:'var(--tx)'}}>{String(d).padStart(2,'0')}</span>
               {st==='free'
                 ? <span style={{fontSize:8,color:'var(--mu)',lineHeight:1}}>libre</span>
                 : <span style={{width:6,height:6,borderRadius:'50%',background:dotColor}}/>}
               {hasEst && !isFree && <span style={{position:'absolute',top:1,right:3,fontSize:8,color:TEAL,opacity:.8}}>~</span>}
+              {hasData && !isFree && (
+                <div style={{position:'absolute',bottom:2,left:3,right:3,display:'flex',flexDirection:'column',gap:1}}>
+                  <div style={{height:2,background:'rgba(255,255,255,0.08)',borderRadius:1,overflow:'hidden'}}><div style={{width:`${kPct}%`,height:'100%',background:'#378add'}}/></div>
+                  <div style={{height:2,background:'rgba(255,255,255,0.08)',borderRadius:1,overflow:'hidden'}}><div style={{width:`${pPct}%`,height:'100%',background:TEAL}}/></div>
+                </div>
+              )}
             </button>
           );
         })}
@@ -675,6 +699,15 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         ))}
       </div>
 
+      {/* Selector de cantidad para el proximo plato que pulses */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <span style={{fontSize:11,color:'var(--mu3)'}}>Cantidad</span>
+        <button onClick={()=>setQty(q=>Math.max(1,q-1))} style={dQty}>-</button>
+        <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,minWidth:22,textAlign:'center',color:qty>1?TEAL:'var(--tx)'}}>{qty}</span>
+        <button onClick={()=>setQty(q=>q+1)} style={dQty}>+</button>
+        {qty>1 && <span style={{fontSize:10,color:TEAL}}>se anadiran {qty} de una</span>}
+      </div>
+
       {/* Lista de platos ordenada por frecuencia de uso */}
       <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginBottom:6}}>
         <button onClick={()=>setPantryOpen(true)} style={dMini}>🥫 Despensa</button>
@@ -690,7 +723,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
               </div>
               <span style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</span>
             </button>
-            {editMode && t.user_created && (
+            {editMode && (
               <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'" de tu lista?')) D.deleteTemplate(t.id); }}
                 style={{position:'absolute',top:-6,right:-6,width:22,height:22,borderRadius:'50%',background:'#e24b4a',border:'none',color:'#fff',fontSize:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>×</button>
             )}
@@ -700,15 +733,20 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
           <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
         </button>
       </div>
-      {editMode && <p style={{fontSize:10,opacity:.4,margin:'0 0 10px'}}>Solo puedes borrar los elementos que tú has creado. Los de fábrica se quedan.</p>}
+      {editMode && <p style={{fontSize:10,opacity:.4,margin:'0 0 10px'}}>Pulsa la × para borrar cualquier elemento de tu lista.</p>}
 
       {/* lista del día */}
       {totals.items.length>0 && (
         <div style={{marginBottom:14}}>
           {totals.items.map(it=>(
             <div key={it.id} style={dRow}>
-              <span style={{flex:1,fontSize:13}}>{it.name}</span>
-              <span style={{fontSize:12,opacity:.6,marginRight:10}}>{it.kcal} · {Math.round(it.protein)}g</span>
+              <span style={{flex:1,fontSize:13}}>{it.name}{(it.qty||1)>1?` ×${it.qty}`:''}{it.estimated?' ~':''}</span>
+              <div style={{display:'flex',alignItems:'center',gap:4,marginRight:8}}>
+                <button onClick={()=>{ const q=(it.qty||1)-1; if(q<=0){ D.deleteEntry(it.id); } else { D.updateEntryQty(it,q); } }} style={dQty}>−</button>
+                <span style={{fontSize:12,minWidth:14,textAlign:'center'}}>{it.qty||1}</span>
+                <button onClick={()=>D.updateEntryQty(it,(it.qty||1)+1)} style={dQty}>+</button>
+              </div>
+              <span style={{fontSize:12,opacity:.6,marginRight:10,minWidth:64,textAlign:'right'}}>{it.kcal} · {Math.round(it.protein)}g</span>
               <button onClick={()=>D.deleteEntry(it.id)} style={dDel}>×</button>
             </div>
           ))}
@@ -755,6 +793,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
       {newOpen && <DNewItemModal meal={meal} onClose={()=>setNewOpen(false)}
         onCreate={async(item,addToday)=>{ const t=await D.createTemplate(item); if(t&&addToday){ await D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:item.estimated}); } setNewOpen(false); }}/>}
       {pantryOpen && <DPantryModal D={D} onClose={()=>setPantryOpen(false)}/>}
+      {dayPopup && <DDayDetailModal D={D} date={dayPopup} kcalTarget={kcalTarget} protTarget={protTarget} isFree={freeSet.has(dayPopup)} onClose={()=>setDayPopup(null)}/>}
     </div>
   );
 }
@@ -872,6 +911,68 @@ function DNewItemModal({ meal, onClose, onCreate }) {
     </DModal>
   );
 }
+function DDayDetailModal({ D, date, kcalTarget, protTarget, isFree, onClose }) {
+  const t = dayTotals(D.entries, date);
+  const byMeal = {};
+  t.items.forEach(it => { const m = it.meal || 'otros'; (byMeal[m] = byMeal[m] || []).push(it); });
+  const order = ['desayuno','brunch','almuerzo','merienda','cena','otros'];
+  const kPct = Math.round((t.kcal / kcalTarget) * 100);
+  const pPct = Math.round((t.protein / protTarget) * 100);
+  const dlabel = (() => { try { return new Date(date+'T00:00:00').toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'}); } catch { return date; } })();
+  const kDiff = t.kcal - kcalTarget;
+  const pDiff = Math.round(t.protein - protTarget);
+
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 2px',textTransform:'capitalize'}}>{dlabel}</h3>
+      {isFree ? (
+        <p style={{fontSize:13,color:'var(--mu)',margin:'10px 0'}}>Día marcado como libre — no medido.</p>
+      ) : t.items.length === 0 ? (
+        <p style={{fontSize:13,color:'var(--mu)',margin:'10px 0'}}>Sin registros este día.</p>
+      ) : (
+        <>
+          {/* resumen kcal y proteína con % */}
+          <div style={{display:'flex',gap:10,margin:'10px 0 16px'}}>
+            <div style={{flex:1,background:'var(--sf)',border:'1px solid var(--bd)',padding:'8px 10px'}}>
+              <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'var(--mu3)'}}>Calorías</div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:'#378add'}}>{Math.round(t.kcal)} <span style={{fontSize:12,color:'var(--mu)'}}>/ {kcalTarget}</span></div>
+              <div style={{fontSize:10,color:kDiff>0?'#e24b4a':TEAL}}>{kPct}% · {kDiff>0?'+':''}{kDiff} kcal</div>
+            </div>
+            <div style={{flex:1,background:'var(--sf)',border:'1px solid var(--bd)',padding:'8px 10px'}}>
+              <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'var(--mu3)'}}>Proteína</div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:TEAL}}>{Math.round(t.protein)} <span style={{fontSize:12,color:'var(--mu)'}}>/ {protTarget}g</span></div>
+              <div style={{fontSize:10,color:pDiff<0?'#ef9f27':TEAL}}>{pPct}% · {pDiff>0?'+':''}{pDiff} g</div>
+            </div>
+          </div>
+
+          {/* desglose por momento */}
+          <div style={{maxHeight:'45vh',overflowY:'auto'}}>
+            {order.filter(m=>byMeal[m]).map(m=>{
+              const items=byMeal[m];
+              const mk=items.reduce((s,i)=>s+(i.kcal||0),0);
+              const mp=items.reduce((s,i)=>s+(Number(i.protein)||0),0);
+              return (
+                <div key={m} style={{marginBottom:12}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4,borderBottom:`1px solid ${TEAL}33`,paddingBottom:3}}>
+                    <span style={{fontSize:11,letterSpacing:1,textTransform:'uppercase',color:TEAL}}>{MEAL_LBL[m]}</span>
+                    <span style={{fontSize:10,color:'var(--mu)'}}>{mk} kcal · {Math.round(mp)} g</span>
+                  </div>
+                  {items.map(it=>(
+                    <div key={it.id} style={{display:'flex',justifyContent:'space-between',fontSize:12,padding:'2px 0'}}>
+                      <span>{it.name}{(it.qty||1)>1?` ×${it.qty}`:''}{it.estimated?' ~':''}</span>
+                      <span style={{color:'var(--mu3)'}}>{it.kcal} · {Math.round(it.protein)}g</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <button onClick={onClose} style={{...dMini,width:'100%',marginTop:8,padding:'10px'}}>Cerrar</button>
+    </DModal>
+  );
+}
 function DPantryModal({ D, onClose }) {
   const [editId, setEditId] = useState(null);
   const [f, setF] = useState({});
@@ -889,7 +990,7 @@ function DPantryModal({ D, onClose }) {
   return (
     <DModal onClose={onClose}>
       <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>DESPENSA</h3>
-      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Todos tus alimentos. Edita o elimina (solo se pueden borrar los que tú creaste).</p>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Todos tus alimentos. Edita o elimina cualquiera.</p>
       <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar…"
         style={{width:'100%',fontSize:16,padding:8,marginBottom:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
       <div style={{maxHeight:'50vh',overflowY:'auto'}}>
@@ -918,10 +1019,10 @@ function DPantryModal({ D, onClose }) {
                 <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.name}{t.estimated?' ~':''}</div>
-                  <div style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g{t.user_created?'':' · fábrica'}</div>
+                  <div style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</div>
                 </div>
                 <button onClick={()=>startEdit(t)} style={{...dMini,padding:'4px 8px'}}>editar</button>
-                {t.user_created && <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'"?')) D.deleteTemplate(t.id); }} style={{...dMini,padding:'4px 8px',borderColor:'rgba(226,75,74,0.4)',color:'#e24b4a'}}>×</button>}
+                <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'"?')) D.deleteTemplate(t.id); }} style={{...dMini,padding:'4px 8px',borderColor:'rgba(226,75,74,0.4)',color:'#e24b4a'}}>×</button>
               </div>
             )}
           </div>
@@ -941,17 +1042,20 @@ const DField=({label,value,onChange,placeholder,type='text'})=>(
 const dTpl={background:'var(--sf)',border:'1px solid var(--bd2)',padding:11,textAlign:'left',color:'inherit',cursor:'pointer'};
 const dRow={display:'flex',alignItems:'center',padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'};
 const dDel={background:'none',border:'none',color:'#e24b4a',fontSize:18,cursor:'pointer',padding:'0 4px'};
+const dQty={background:'rgba(255,255,255,0.06)',border:'1px solid var(--bd2)',color:'inherit',width:22,height:22,fontSize:14,cursor:'pointer',lineHeight:1,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:4};
 const dMini={background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',padding:'5px 10px',fontSize:11,color:'inherit',cursor:'pointer'};
 const dPrimary={flex:1,background:TEAL,border:'none',padding:'10px 14px',fontSize:14,fontWeight:500,color:'#06241b',cursor:'pointer'};
 
 // ── App root ──────────────────────────────────────────────────
 export default function App() {
-  const [panel, setPanel]           = useState('dashboard');
+  const [panel, setPanel]           = useState(() => loadUI('panel','dashboard'));
   const [focusDate, setFocusDate]   = useState(null);
   const [showMigrate, setShowMigrate] = useState(false);
-  const [dashMode, setDashMode] = useState('entrenos');
+  const [dashMode, setDashMode] = useState(() => loadUI('dashMode','entrenos'));
   const data = useTrainingData();
   const dietData = useNutritionData();
+  useEffect(() => { saveUI('panel', panel); }, [panel]);
+  useEffect(() => { saveUI('dashMode', dashMode); }, [dashMode]);
 
   const handleDayClick = date => { setFocusDate(date); setPanel('diario'); };
   const goToPanel = p => { setPanel(p); if (p!=='diario') setFocusDate(null); };

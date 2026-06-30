@@ -576,6 +576,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const [pantryOpen, setPantryOpen] = useState(false);
   const [qty, setQty] = useState(1);
   const [dayPopup, setDayPopup] = useState(null);
+  useEffect(() => { saveUI('meal', meal); }, [meal]);
 
   if (!D || D.loading) return <div className="empty">Cargando dieta…</div>;
 
@@ -593,7 +594,6 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const ranked = rankedTemplates(D.templates, D.entries);
   const freeSet = new Set((D.freeDays||[]).map(f=>f.date));
   const selIsFree = freeSet.has(sel);
-  useEffect(() => { saveUI('meal', meal); }, [meal]);
 
   const parseFood = async () => {
     if(!foodText.trim())return; setAiBusy(true);

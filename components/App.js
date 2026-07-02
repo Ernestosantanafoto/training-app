@@ -870,18 +870,18 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
         <button onClick={()=>setPantryOpen(true)} style={dMini}>▤ DESPENSA</button>
         <button onClick={()=>setEditMode(v=>!v)} style={{...dMini,borderColor:editMode?TEAL:'var(--bd2)',color:editMode?TEAL:'var(--mu3)'}}>{editMode?'✓ listo':'editar lista'}</button>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:8,marginBottom:10}}>
         <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
         </button>
         {ranked.map(t=>(
-          <div key={t.id} style={{position:'relative'}}>
+          <div key={t.id} style={{position:'relative',minWidth:0}}>
             <button onClick={()=>editMode?null:addTpl(t)} style={{...dTpl,width:'100%',opacity:editMode?.6:1}}>
               <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3,minWidth:0}}>
                 <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
                 <span style={{fontSize:13,fontWeight:500,flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.name}{t.estimated?' ~':''}</span>
               </div>
-              <span style={{fontSize:11,opacity:.55}}>{t.kcal} kcal · {t.protein} g</span>
+              <span style={{fontSize:11,opacity:.55,display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.kcal} kcal · {t.protein} g</span>
             </button>
             {editMode && (
               <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'" de tu lista?')) D.deleteTemplate(t.id); }}
@@ -1001,7 +1001,7 @@ const DField=({label,value,onChange,placeholder,type='text'})=>(
     <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',fontSize:16,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
   </div>
 );
-const dTpl={background:'var(--sf)',border:'1px solid var(--bd2)',padding:'10px 12px',textAlign:'left',color:'inherit',cursor:'pointer',height:64,overflow:'hidden',boxSizing:'border-box'};
+const dTpl={background:'var(--sf)',border:'1px solid var(--bd2)',padding:'10px 12px',textAlign:'left',color:'inherit',cursor:'pointer',height:64,overflow:'hidden',boxSizing:'border-box',maxWidth:'100%',minWidth:0};
 const dRow={display:'flex',alignItems:'center',padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'};
 const dDel={background:'none',border:'none',color:'#e24b4a',fontSize:20,cursor:'pointer',padding:'6px 10px'};
 const dQty={background:'rgba(255,255,255,0.06)',border:'1px solid var(--bd2)',color:'inherit',width:38,height:38,fontSize:18,cursor:'pointer',lineHeight:1,display:'flex',alignItems:'center',justifyContent:'center'};

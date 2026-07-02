@@ -862,6 +862,9 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         <button onClick={()=>setEditMode(v=>!v)} style={{...dMini,borderColor:editMode?TEAL:'var(--bd2)',color:editMode?TEAL:'var(--mu3)'}}>{editMode?'✓ listo':'editar lista'}</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+        <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
+        </button>
         {ranked.map(t=>(
           <div key={t.id} style={{position:'relative'}}>
             <button onClick={()=>editMode?null:addTpl(t)} style={{...dTpl,width:'100%',opacity:editMode?.6:1}}>
@@ -877,9 +880,6 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
             )}
           </div>
         ))}
-        <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
-          <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
-        </button>
       </div>
       {editMode && <p style={{fontSize:10,opacity:.4,margin:'0 0 10px'}}>Pulsa la × para borrar cualquier elemento de tu lista.</p>}
 
@@ -933,7 +933,12 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
               {aiPreview.items.map((i,k)=>(<div key={k} style={dRow}><span style={{flex:1,fontSize:13}}>{i.name}</span><span style={{fontSize:12,opacity:.6}}>{i.kcal} · {Math.round(i.protein)}g</span></div>))}
               <div style={{fontSize:12,opacity:.7,margin:'8px 0',textAlign:'right'}}>Total: {fmtN(aiPreview.total_kcal)} kcal · {Math.round(aiPreview.total_protein)} g</div>
               {aiPreview.note && <div style={{fontSize:11,color:TEAL,marginBottom:8}}>{aiPreview.note}</div>}
-              <div style={{display:'flex',gap:8}}><button onClick={confirmAi} style={dPrimary}>Añadir al día</button><button onClick={()=>setAiPreview(null)} style={dMini}>Reintentar</button></div>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                <button onClick={confirmAi} style={dPrimary}>Añadir al día</button>
+                <button onClick={async()=>{ for(const i of aiPreview.items){ await D.createTemplate({name:i.name,kcal:i.kcal,protein:i.protein,tier:'verde',meal:i.meal||meal}); } await confirmAi(); }}
+                  style={{...dMini,padding:'11px 14px',borderColor:TEAL,color:TEAL,textAlign:'center'}}>Añadir al día + guardar en despensa</button>
+                <button onClick={()=>setAiPreview(null)} style={{...dMini,textAlign:'center'}}>Reintentar</button>
+              </div>
             </div>
           )}
         </DModal>
@@ -1063,14 +1068,23 @@ function DNewItemModal({ meal, onClose, onCreate }) {
   const [paste, setPaste] = useState('');
   const valid = name.trim() && kcal !== '';
 
-  const applyPaste = () => {
-    const p = parseNutriPaste(paste);
-    if (p) {
+  const applyParsed = (txt) => {
+    const p = parseNutriPaste(txt);
+    if (p && (p.name || p.kcal !== '')) {
       if (p.name) setName(p.name);
       if (p.kcal !== '') setKcal(String(p.kcal));
       if (p.protein !== '') setProtein(String(p.protein));
       if (p.tier) setTier(p.tier);
+      return true;
     }
+    return false;
+  };
+  const onPasteChange = (v) => { setPaste(v); applyParsed(v); };
+  const pasteFromClipboard = async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      if (t) { setPaste(t); applyParsed(t); }
+    } catch (e) { /* sin permiso: se puede pegar a mano */ }
   };
 
   const build = () => ({name:name.trim(),kcal:Number(kcal),protein:Number(protein||0),tier,meal,estimated});
@@ -1080,11 +1094,13 @@ function DNewItemModal({ meal, onClose, onCreate }) {
       <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>NUEVO ELEMENTO</h3>
       <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Pega lo que te devuelve el chat, o rellena a mano.</p>
 
-      {/* Pegar copy-paste del prompt */}
-      <label style={{fontSize:11,opacity:.6}}>Pegar del chat</label>
-      <textarea value={paste} onChange={e=>setPaste(e.target.value)} placeholder={"Nombre: ...\\nCalorías: ... kcal\\nProteína: ... g\\nTipo: ..."}
-        style={{width:'100%',minHeight:56,fontSize:14,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
-      <button onClick={applyPaste} style={{...dMini,margin:'6px 0 14px',borderColor:TEAL,color:TEAL}}>↡ Rellenar campos desde el texto</button>
+      {/* Pegar copy-paste del prompt: se rellena solo */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <label style={{fontSize:11,opacity:.6}}>Pegar del chat · se rellena solo</label>
+        <button onClick={pasteFromClipboard} style={{...dMini,padding:'6px 10px',borderColor:TEAL,color:TEAL}}>📋 PEGAR</button>
+      </div>
+      <textarea value={paste} onChange={e=>onPasteChange(e.target.value)} placeholder={"Nombre: ...\nCalorías: ... kcal\nProteína: ... g\nTipo: ..."}
+        style={{width:'100%',minHeight:56,fontSize:14,padding:8,margin:'6px 0 14px',background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
 
       <DField label="Nombre" value={name} onChange={setName} placeholder="Ej: Ensalada mediodía con pollo frito"/>
       <div style={{display:'flex',gap:8}}>

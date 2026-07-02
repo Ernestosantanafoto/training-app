@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTrainingData } from '../lib/useTrainingData';
 import { fmtDate, fmtShort, getIntensity, BIO_FIELDS, typeColor, isCardioType } from '../lib/helpers';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
@@ -511,8 +511,9 @@ function MigrateBanner({ onDone }) {
 }
 
 // ── EntrenoHub ────────────────────────────────────────────────
-function EntrenoHub({ onSessionComplete, onSave }) {
+function EntrenoHub({ onSessionComplete, onSave, dietData }) {
   const [view, setView] = useState('menu');
+  const [garminOpen, setGarminOpen] = useState(false);
 
   if (view === 'gymfire') return (
     <div>
@@ -548,8 +549,16 @@ function EntrenoHub({ onSessionComplete, onSave }) {
             <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>TEXTO · IMAGEN · GARMIN · BÁSCULA</div>
           </div>
         </button>
+        <button onClick={() => setGarminOpen(true)} style={{width:'100%',padding:'20px 20px',background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.3)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
+          <span style={{fontSize:28,color:'#1d9e75'}}>⌁</span>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'#1d9e75'}}>DATOS GARMIN</div>
+            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>PASOS · SUEÑO · CALORÍAS · FC · BODY BATTERY</div>
+          </div>
+        </button>
 
       </div>
+      {garminOpen && <DGarminModal onClose={()=>setGarminOpen(false)} onSave={async(days)=>{ if(dietData) await dietData.addGarminDays(days); setGarminOpen(false); }}/>}
     </div>
   );
 }
@@ -559,7 +568,7 @@ const TEAL = '#1d9e75';
 const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
 const ST_COLOR = { verde:'#1d9e75', ambar:'#ef9f27', rojo:'#e24b4a', none:'rgba(255,255,255,0.12)' };
 const fmtN = n => Math.round(n).toLocaleString('es-ES');
-const TODAY_STR = () => new Date().toISOString().slice(0,10);
+const TODAY_STR = () => new Date().toLocaleDateString('en-CA'); // fecha LOCAL, no UTC
 const MEALS = ['desayuno','brunch','almuerzo','merienda','cena','otros'];
 const MEAL_LBL = {desayuno:'Desayuno',brunch:'Brunch',almuerzo:'Almuerzo',merienda:'Merienda',cena:'Cena',otros:'Otros'};
 
@@ -570,20 +579,61 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState(null);
   const [photoOpen, setPhotoOpen] = useState(false);
-  const [meal, setMeal] = useState(() => loadUI('meal','desayuno'));
+  const [meal, setMeal] = useState(() => { const v = loadUI('meal','desayuno'); return MEALS.includes(v) ? v : 'desayuno'; });
   const [newOpen, setNewOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [pantryOpen, setPantryOpen] = useState(false);
   const [qty, setQty] = useState(1);
   const [dayPopup, setDayPopup] = useState(null);
+  const [aiErr, setAiErr] = useState(null);
   useEffect(() => { saveUI('meal', meal); }, [meal]);
+
+  // Agrupar registros por fecha UNA vez (evita filtrar todo el array por cada celda)
+  const totalsByDate = useMemo(() => {
+    const m = {};
+    (D?.entries || []).forEach(e => {
+      const t = m[e.date] || (m[e.date] = { kcal: 0, protein: 0, items: [] });
+      t.kcal += e.kcal || 0; t.protein += Number(e.protein) || 0; t.items.push(e);
+    });
+    return m;
+  }, [D?.entries]);
+  const rankedMemo = useMemo(() => rankedTemplates(D?.templates, D?.entries), [D?.templates, D?.entries]);
+  const streakMemo = useMemo(() => calcStreak(D?.entries || [], D?.freeDays || []), [D?.entries, D?.freeDays]);
+  const freeSetMemo = useMemo(() => new Set((D?.freeDays || []).map(f => f.date)), [D?.freeDays]);
+
+  // Objetivo dinamico: media del gasto real (Garmin) de los ultimos 7 dias con datos, menos deficit moderado
+  const dynInfo = useMemo(() => {
+    const today = TODAY_STR();
+    const rows = (D?.garmin || []).filter(g => g.date < today && (g.kcal_total || 0) > 1200);
+    const last7 = rows.slice(0, 7);
+    if (!last7.length) return null;
+    const avg = Math.round(last7.reduce((s, g) => s + g.kcal_total, 0) / last7.length);
+    // deficit moderado de 600, con suelo de seguridad (nunca por debajo de 2300) y techo 3200
+    const target = Math.min(3200, Math.max(2300, Math.round((avg - 600) / 10) * 10));
+    return { avg, target, days: last7.length };
+  }, [D?.garmin]);
+
+  // Ultimo sueño registrado (para la cabecera)
+  const lastSleep = useMemo(() => {
+    const g = (D?.garmin || []).find(x => x.sleep_h != null);
+    return g ? { date: g.date, h: g.sleep_h, score: g.sleep_score } : null;
+  }, [D?.garmin]);
+
+  const garminByDate = useMemo(() => {
+    const m = {};
+    (D?.garmin || []).forEach(g => { m[g.date] = g; });
+    return m;
+  }, [D?.garmin]);
 
   if (!D || D.loading) return <div className="empty">Cargando dieta…</div>;
 
-  const kcalTarget = D.target.kcal_target || 2800;
+  const EMPTY_DAY = { kcal: 0, protein: 0, items: [] };
+  const getDay = ds => totalsByDate[ds] || EMPTY_DAY;
+
+  const kcalTarget = (dynInfo && dynInfo.target) || D.target.kcal_target || 2800;
   const protTarget = D.target.protein_target || 160;
-  const totals = dayTotals(D.entries, sel);
-  const streak = calcStreak(D.entries, D.freeDays);
+  const totals = getDay(sel);
+  const streak = streakMemo;
   const kcalPct = Math.min(100,(totals.kcal/kcalTarget)*100);
   const protPct = Math.min(100,(totals.protein/protTarget)*100);
   const kcalLeft = Math.max(0,kcalTarget-totals.kcal);
@@ -591,21 +641,22 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
   const calMonthStr = String(calMonth).padStart(2,'0');
 
   const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
-  const ranked = rankedTemplates(D.templates, D.entries);
-  const freeSet = new Set((D.freeDays||[]).map(f=>f.date));
+  const ranked = rankedMemo;
+  const freeSet = freeSetMemo;
   const selIsFree = freeSet.has(sel);
 
   const parseFood = async () => {
-    if(!foodText.trim())return; setAiBusy(true);
+    if(!foodText.trim())return; setAiBusy(true); setAiErr(null);
     try{
       const r=await fetch('/api/nutrition',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:foodText})});
       const data=await r.json();
-      if(data.items&&data.items.length)setAiPreview(data);
-    }catch(e){} finally{setAiBusy(false);}
+      if(data.items&&data.items.length){ setAiPreview(data); }
+      else { setAiErr(data.error?('La IA falló: '+data.error):'La IA no pudo interpretar esa comida. Prueba a describirla de otra forma.'); }
+    }catch(e){ setAiErr('Sin conexión con la IA. Reintenta.'); } finally{setAiBusy(false);}
   };
   const confirmAi = async () => {
     if(!aiPreview?.items)return;
-    await D.addEntriesBatch(aiPreview.items.map(i=>({...i,date:sel,source:'texto'})));
+    await D.addEntriesBatch(aiPreview.items.map(i=>({...i,meal,date:sel,source:'texto'})));
     setAiPreview(null);setFoodText('');setTextOpen(false);
   };
 
@@ -614,11 +665,12 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
 
   return (
     <div>
+      {D.error && <div style={{fontSize:10,color:'var(--ac2,#ff4747)',marginBottom:12,padding:'8px 12px',border:'1px solid rgba(255,71,71,.25)'}}>⚠ Error guardando en Supabase: {D.error}</div>}
       {/* anillo + racha */}
       <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
-        <span style={{display:'flex',alignItems:'center',gap:6,background:'rgba(239,159,39,0.12)',color:'#ef9f27',padding:'5px 12px',borderRadius:20,fontSize:13,fontFamily:"'DM Mono',monospace"}}>🔥 {streak} {streak===1?'día':'días'}</span>
+        <span style={{display:'flex',alignItems:'center',gap:6,background:'rgba(239,159,39,0.08)',border:'1px solid rgba(239,159,39,0.35)',color:'#ef9f27',padding:'6px 14px',fontSize:11,letterSpacing:2,textTransform:'uppercase',fontFamily:"'DM Mono',monospace"}}>◆ {streak} {streak===1?'DÍA':'DÍAS'}</span>
       </div>
-      <div style={{background:'rgba(29,158,117,0.06)',border:'1px solid rgba(29,158,117,0.25)',borderRadius:14,padding:16,marginBottom:14,display:'flex',alignItems:'center',gap:16}}>
+      <div style={{background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.3)',padding:16,marginBottom:20,display:'flex',alignItems:'center',gap:16}}>
         <div style={{position:'relative',width:108,height:108,flexShrink:0}}>
           <svg viewBox="0 0 120 120" width="108" height="108">
             <circle cx="60" cy="60" r={R1} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="11"/>
@@ -634,6 +686,10 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
         <div style={{flex:1,display:'flex',flexDirection:'column',gap:11}}>
           <DBar label="Calorías" color="#378add" cur={totals.kcal} max={kcalTarget} right={`${fmtN(kcalLeft)} rest.`}/>
           <DBar label="Proteína" color={TEAL} cur={totals.protein} max={protTarget} right={`${Math.round(totals.protein)}/${protTarget} g`}/>
+          <div style={{display:'flex',flexDirection:'column',gap:2}}>
+            {dynInfo && <span style={{fontSize:9,color:'var(--mu3)',letterSpacing:.3}}>◎ objetivo según tu gasto real · media {dynInfo.days}d: {fmtN(dynInfo.avg)} kcal</span>}
+            {lastSleep && <span style={{fontSize:9,color:lastSleep.h<7?'#ef9f27':'var(--mu3)',letterSpacing:.3}}>◐ sueño {Math.floor(lastSleep.h)}h{String(Math.round((lastSleep.h%1)*60)).padStart(2,'0')}{lastSleep.score?` · punt. ${lastSleep.score}`:''}{lastSleep.h<7?' · corto':''}</span>}
+          </div>
           {sel!==TODAY_STR() && <button onClick={()=>setSel(TODAY_STR())} style={dMini}>← volver a hoy</button>}
         </div>
       </div>
@@ -659,17 +715,18 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
           if(!cell)return <div key={i} style={{aspectRatio:'1',background:'var(--sf)',border:'1px solid var(--bd)'}}/>;
           const {d}=cell;
           const ds=`${calYear}-${calMonthStr}-${String(d).padStart(2,'0')}`;
-          const t=dayTotals(D.entries,ds);
+          const t=getDay(ds);
           const isFree=freeSet.has(ds);
           const hasEst=t.items.some(it=>it.estimated);
-          const st=isFree?'free':dayStatus(t.kcal,kcalTarget);
+          const isPast=ds<TODAY_STR();
+          const st=isFree?'free':dayStatus(t.kcal,kcalTarget,t.protein,protTarget,isPast);
           const isSel=ds===sel;
           const dotColor=st==='free'?'var(--mu2)':ST_COLOR[st];
           const kPct=Math.min(100,(t.kcal/kcalTarget)*100);
           const pPct=Math.min(100,(t.protein/protTarget)*100);
           const hasData=t.items.length>0;
           return (
-            <button key={d} onClick={()=>{ setSel(ds); setDayPopup(ds); }}
+            <button key={d} onClick={()=>{ if(sel===ds){ setDayPopup(ds); } else { setSel(ds); } }}
               style={{aspectRatio:'1',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2,background:isSel?'rgba(29,158,117,0.15)':isFree?'rgba(255,255,255,0.02)':'var(--sf)',border:isSel?`1px solid ${TEAL}`:'1px solid var(--bd)',cursor:'pointer',padding:0,width:'100%',position:'relative',overflow:'hidden'}}>
               <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:11,opacity:(st==='none')?.3:.85,color:isSel?TEAL:'var(--tx)'}}>{String(d).padStart(2,'0')}</span>
               {st==='free'
@@ -678,14 +735,15 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
               {hasEst && !isFree && <span style={{position:'absolute',top:1,right:3,fontSize:8,color:TEAL,opacity:.8}}>~</span>}
               {hasData && !isFree && (
                 <div style={{position:'absolute',bottom:2,left:3,right:3,display:'flex',flexDirection:'column',gap:1}}>
-                  <div style={{height:2,background:'rgba(255,255,255,0.08)',borderRadius:1,overflow:'hidden'}}><div style={{width:`${kPct}%`,height:'100%',background:'#378add'}}/></div>
-                  <div style={{height:2,background:'rgba(255,255,255,0.08)',borderRadius:1,overflow:'hidden'}}><div style={{width:`${pPct}%`,height:'100%',background:TEAL}}/></div>
+                  <div style={{height:3,background:'rgba(255,255,255,0.1)',overflow:'hidden'}}><div style={{width:`${kPct}%`,height:'100%',background:'#4a9fe8'}}/></div>
+                  <div style={{height:3,background:'rgba(255,255,255,0.1)',overflow:'hidden'}}><div style={{width:`${pPct}%`,height:'100%',background:'#25c290'}}/></div>
                 </div>
               )}
             </button>
           );
         })}
       </div>
+      <p style={{fontSize:9,color:'var(--mu)',letterSpacing:.5,margin:'-14px 0 16px',textAlign:'right'}}>toca un día para seleccionarlo · tócalo otra vez para ver su detalle</p>
 
       {/* Selector de momento del día */}
       <div className="sl">Añadir · {sel===TODAY_STR()?'hoy':sel}</div>
@@ -710,7 +768,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
 
       {/* Lista de platos ordenada por frecuencia de uso */}
       <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginBottom:6}}>
-        <button onClick={()=>setPantryOpen(true)} style={dMini}>🥫 Despensa</button>
+        <button onClick={()=>setPantryOpen(true)} style={dMini}>▤ DESPENSA</button>
         <button onClick={()=>setEditMode(v=>!v)} style={{...dMini,borderColor:editMode?TEAL:'var(--bd2)',color:editMode?TEAL:'var(--mu3)'}}>{editMode?'✓ listo':'editar lista'}</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
@@ -778,6 +836,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
           <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 10px'}}>AÑADIR COMIDA</h3>
           <textarea value={foodText} onChange={e=>setFoodText(e.target.value)} placeholder="Ej: 200g de salmón con una taza de arroz y ensalada"
             style={{width:'100%',minHeight:80,fontSize:16,padding:10,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
+          {aiErr && <div style={{fontSize:11,color:'#e24b4a',marginTop:8}}>⚠ {aiErr}</div>}
           {!aiPreview && <button onClick={parseFood} disabled={aiBusy} style={{...dPrimary,marginTop:10,opacity:aiBusy?.5:1}}>{aiBusy?'Analizando…':'Analizar con IA'}</button>}
           {aiPreview && (
             <div style={{marginTop:12}}>
@@ -791,9 +850,9 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, onTouch
       )}
       {photoOpen && <DPhotoModal onClose={()=>setPhotoOpen(false)} onSave={async(p)=>{await D.addPhoto({...p,date:sel});setPhotoOpen(false);}}/>}
       {newOpen && <DNewItemModal meal={meal} onClose={()=>setNewOpen(false)}
-        onCreate={async(item,addToday)=>{ const t=await D.createTemplate(item); if(t&&addToday){ await D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:item.estimated}); } setNewOpen(false); }}/>}
+        onCreate={async(item,addToday)=>{ await D.createTemplate(item); if(addToday){ await D.addEntry({date:sel,meal,name:item.name,kcal:item.kcal,protein:item.protein,source:'plantilla',estimated:item.estimated,qty}); } setNewOpen(false); }}/>}
       {pantryOpen && <DPantryModal D={D} onClose={()=>setPantryOpen(false)}/>}
-      {dayPopup && <DDayDetailModal D={D} date={dayPopup} kcalTarget={kcalTarget} protTarget={protTarget} isFree={freeSet.has(dayPopup)} onClose={()=>setDayPopup(null)}/>}
+      {dayPopup && <DDayDetailModal D={D} date={dayPopup} kcalTarget={kcalTarget} protTarget={protTarget} isFree={freeSet.has(dayPopup)} garmin={garminByDate[dayPopup]} onClose={()=>setDayPopup(null)}/>}
     </div>
   );
 }
@@ -803,12 +862,12 @@ function DBar({label,color,cur,max,right}) {
   return (
     <div>
       <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}><span style={{color}}>{label}</span><span style={{opacity:.6}}>{right}</span></div>
-      <div style={{height:6,background:'rgba(255,255,255,0.08)',borderRadius:3,overflow:'hidden'}}><div style={{width:`${pct}%`,height:'100%',background:color,borderRadius:3}}/></div>
+      <div style={{height:6,background:'rgba(255,255,255,0.08)',overflow:'hidden'}}><div style={{width:`${pct}%`,height:'100%',background:color}}/></div>
     </div>
   );
 }
 const DLg=({c,t})=><span style={{display:'flex',alignItems:'center',gap:3}}><span style={{width:7,height:7,borderRadius:'50%',background:c}}/>{t}</span>;
-function DModal({children,onClose}){return <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:'#1a1a19',border:'1px solid rgba(255,255,255,0.12)',padding:18,maxWidth:360,width:'100%'}}>{children}</div></div>;}
+function DModal({children,onClose}){return <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:'var(--bg,#0e0e0d)',border:'1px solid var(--bd2,rgba(255,255,255,0.14))',padding:20,maxWidth:380,width:'100%',maxHeight:'85vh',overflowY:'auto'}}>{children}</div></div>;}
 function DPhotoModal({onClose,onSave}){
   const [waist,setWaist]=useState('');const [weight,setWeight]=useState('');const [assessment,setAssessment]=useState('');const [url,setUrl]=useState('');
   return (
@@ -826,6 +885,51 @@ function DPhotoModal({onClose,onSave}){
     </DModal>
   );
 }
+// parsea el bloque estandar de datos Garmin (uno o varios dias)
+function parseGarminPaste(text) {
+  if (!text) return [];
+  const toNum = s => {
+    if (s == null) return null;
+    let t = String(s).trim();
+    if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    if (/^\d{1,3}(,\d{3})+$/.test(t)) t = t.replace(/,/g, '');
+    t = t.replace(',', '.');
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
+  const normDate = s => {
+    if (!s) return null;
+    const t = s.trim();
+    let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+    m = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    return null;
+  };
+  const blocks = text.split(/(?=fecha\s*:)/i).filter(b => b.trim());
+  const days = [];
+  for (const b of blocks) {
+    const get = re => { const m = b.match(re); return m ? m[1] : null; };
+    const date = normDate(get(/fecha\s*:\s*([\d\-\/]+)/i));
+    if (!date) continue;
+    const sleepM = b.match(/sue[nñ]o\s*:\s*(\d+)\s*h\s*(\d+)?/i);
+    const sleep_h = sleepM ? Number((Number(sleepM[1]) + (Number(sleepM[2]||0)/60)).toFixed(2)) : null;
+    const scoreM = b.match(/sue[nñ]o[^\n]*\((\d+)\)/i) || b.match(/puntuaci[oó]n\s*:\s*(\d+)/i);
+    const bbM = b.match(/body\s*battery\s*:\s*([+\-]?\d+)/i);
+    days.push({
+      date,
+      steps: toNum(get(/pasos\s*:\s*([\d.,]+)/i)),
+      kcal_total: toNum(get(/calor[ií]as?\s*:\s*([\d.,]+)/i)),
+      resting_hr: toNum(get(/fc\s*(?:en\s*)?reposo\s*:\s*([\d.,]+)/i)),
+      sleep_h,
+      sleep_score: scoreM ? Number(scoreM[1]) : null,
+      body_battery: bbM ? Number(bbM[1]) : null,
+      stress: toNum(get(/estr[eé]s\s*:\s*([\d.,]+)/i)),
+    });
+  }
+  return days;
+}
+
 // parsea el texto que devuelve el prompt nutricional del chat
 function parseNutriPaste(text) {
   if (!text) return null;
@@ -833,6 +937,16 @@ function parseNutriPaste(text) {
   const name = get(/nombre\s*:\s*(.+)/i);
   const kcalRaw = get(/calor[ií]as?\s*:\s*([\d.,]+)/i);
   const protRaw = get(/prote[ií]na\s*:\s*([\d.,]+)/i);
+  // "1.450" (miles es) -> 1450 ; "42,5" -> 42.5
+  const toNum = s => {
+    if (!s) return '';
+    let t = s.trim();
+    if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');       // puntos de miles
+    if (/^\d{1,3}(,\d{3})+$/.test(t)) t = t.replace(/,/g, '');           // comas de miles
+    t = t.replace(',', '.');
+    const n = Number(t);
+    return Number.isFinite(n) ? n : '';
+  };
   const tierRaw = get(/tipo\s*:\s*(\w+)/i);
   if (!name && !kcalRaw) return null;
   let tier = 'verde';
@@ -844,8 +958,8 @@ function parseNutriPaste(text) {
   }
   return {
     name: name || '',
-    kcal: kcalRaw ? Number(kcalRaw.replace(',', '.')) : '',
-    protein: protRaw ? Number(protRaw.replace(',', '.')) : '',
+    kcal: toNum(kcalRaw),
+    protein: toNum(protRaw),
     tier,
   };
 }
@@ -911,7 +1025,7 @@ function DNewItemModal({ meal, onClose, onCreate }) {
     </DModal>
   );
 }
-function DDayDetailModal({ D, date, kcalTarget, protTarget, isFree, onClose }) {
+function DDayDetailModal({ D, date, kcalTarget, protTarget, isFree, garmin, onClose }) {
   const t = dayTotals(D.entries, date);
   const byMeal = {};
   t.items.forEach(it => { const m = it.meal || 'otros'; (byMeal[m] = byMeal[m] || []).push(it); });
@@ -945,6 +1059,17 @@ function DDayDetailModal({ D, date, kcalTarget, protTarget, isFree, onClose }) {
             </div>
           </div>
 
+          {/* balance real del dia (si hay datos garmin) */}
+          {garmin && garmin.kcal_total > 0 && (() => {
+            const bal = Math.round(t.kcal - garmin.kcal_total);
+            return (
+              <div style={{background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.25)',padding:'8px 10px',marginBottom:14,display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+                <span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'var(--mu3)'}}>Balance real · gasto Garmin {fmtN(garmin.kcal_total)}</span>
+                <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:bal<0?TEAL:'#e24b4a'}}>{bal>0?'+':''}{fmtN(bal)} kcal</span>
+              </div>
+            );
+          })()}
+
           {/* desglose por momento */}
           <div style={{maxHeight:'45vh',overflowY:'auto'}}>
             {order.filter(m=>byMeal[m]).map(m=>{
@@ -970,6 +1095,41 @@ function DDayDetailModal({ D, date, kcalTarget, protTarget, isFree, onClose }) {
         </>
       )}
       <button onClick={onClose} style={{...dMini,width:'100%',marginTop:8,padding:'10px'}}>Cerrar</button>
+    </DModal>
+  );
+}
+function DGarminModal({ onClose, onSave }) {
+  const [paste, setPaste] = useState('');
+  const [preview, setPreview] = useState(null);
+  const analyze = () => {
+    const days = parseGarminPaste(paste);
+    setPreview(days.length ? days : []);
+  };
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>DATOS GARMIN</h3>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Pega el bloque que te devuelve el chat a partir de tus capturas. Acepta uno o varios días de golpe. Si un día ya existía, se actualiza.</p>
+      <textarea value={paste} onChange={e=>setPaste(e.target.value)}
+        placeholder={"Fecha: 2026-07-01\nPasos: 12.345\nCalorías: 3.420\nFC reposo: 53\nSueño: 6h58 (79)\nBody Battery: +62"}
+        style={{width:'100%',minHeight:110,fontSize:14,padding:10,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box',fontFamily:"'DM Mono',monospace"}}/>
+      {!preview && <button onClick={analyze} style={{...dPrimary,marginTop:10}}>Analizar</button>}
+      {preview && preview.length===0 && <p style={{fontSize:11,color:'#e24b4a',marginTop:8}}>⚠ No encontré ninguna línea "Fecha:". Revisa el formato.</p>}
+      {preview && preview.length>0 && (
+        <div style={{marginTop:12}}>
+          {preview.map(d=>(
+            <div key={d.date} style={{borderBottom:'1px solid rgba(255,255,255,0.06)',padding:'6px 0',fontSize:11}}>
+              <span style={{color:TEAL,fontFamily:"'DM Mono',monospace"}}>{d.date}</span>
+              <span style={{opacity:.7,marginLeft:8}}>
+                {d.kcal_total?`${d.kcal_total} kcal`:''}{d.steps?` · ${d.steps.toLocaleString('es-ES')} pasos`:''}{d.sleep_h?` · ${Math.floor(d.sleep_h)}h${String(Math.round((d.sleep_h%1)*60)).padStart(2,'0')} sueño`:''}{d.resting_hr?` · FC ${d.resting_hr}`:''}{d.body_battery!=null?` · BB ${d.body_battery>0?'+':''}${d.body_battery}`:''}
+              </span>
+            </div>
+          ))}
+          <div style={{display:'flex',gap:8,marginTop:12}}>
+            <button onClick={()=>onSave(preview)} style={dPrimary}>Guardar {preview.length} {preview.length===1?'día':'días'}</button>
+            <button onClick={()=>setPreview(null)} style={dMini}>Editar</button>
+          </div>
+        </div>
+      )}
     </DModal>
   );
 }
@@ -1039,12 +1199,12 @@ const DField=({label,value,onChange,placeholder,type='text'})=>(
     <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',fontSize:16,padding:8,marginTop:4,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'}}/>
   </div>
 );
-const dTpl={background:'var(--sf)',border:'1px solid var(--bd2)',padding:11,textAlign:'left',color:'inherit',cursor:'pointer'};
+const dTpl={background:'var(--sf)',border:'1px solid var(--bd2)',padding:'12px 12px',textAlign:'left',color:'inherit',cursor:'pointer',minHeight:56};
 const dRow={display:'flex',alignItems:'center',padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'};
-const dDel={background:'none',border:'none',color:'#e24b4a',fontSize:18,cursor:'pointer',padding:'0 4px'};
-const dQty={background:'rgba(255,255,255,0.06)',border:'1px solid var(--bd2)',color:'inherit',width:22,height:22,fontSize:14,cursor:'pointer',lineHeight:1,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:4};
-const dMini={background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',padding:'5px 10px',fontSize:11,color:'inherit',cursor:'pointer'};
-const dPrimary={flex:1,background:TEAL,border:'none',padding:'10px 14px',fontSize:14,fontWeight:500,color:'#06241b',cursor:'pointer'};
+const dDel={background:'none',border:'none',color:'#e24b4a',fontSize:20,cursor:'pointer',padding:'6px 10px'};
+const dQty={background:'rgba(255,255,255,0.06)',border:'1px solid var(--bd2)',color:'inherit',width:38,height:38,fontSize:18,cursor:'pointer',lineHeight:1,display:'flex',alignItems:'center',justifyContent:'center'};
+const dMini={background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',padding:'9px 14px',fontSize:11,letterSpacing:1,color:'inherit',cursor:'pointer',fontFamily:"'DM Mono',monospace"};
+const dPrimary={flex:1,background:TEAL,border:'none',padding:'12px 14px',fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#06241b',cursor:'pointer',fontFamily:"'DM Mono',monospace"};
 
 // ── App root ──────────────────────────────────────────────────
 export default function App() {
@@ -1118,6 +1278,7 @@ export default function App() {
         {data.error && <div style={{fontSize:10,color:'var(--ac2)',marginBottom:16,padding:'8px 12px',border:'1px solid rgba(255,71,71,.2)'}}>⚠ Error conectando con Supabase: {data.error}</div>}
 
         {panel==='dashboard' && <>
+          <div style={{height:2,background:dashMode==='dieta'?'#1d9e75':'var(--ac)',margin:'-8px 0 14px',transition:'background .3s'}}/>
           <div className="diary-tabs" style={{marginBottom:20}}>
             <div className={`diary-tab${dashMode==='entrenos'?' active':''}`} onClick={()=>setDashMode('entrenos')}>Entrenos</div>
             <div className={`diary-tab${dashMode==='dieta'?' active dieta-tab':''}`} onClick={()=>setDashMode('dieta')} style={dashMode==='dieta'?{color:'#1d9e75',borderColor:'#1d9e75'}:{}}>Dieta</div>
@@ -1127,7 +1288,7 @@ export default function App() {
         {panel==='prs'       && <PRs sessions={data.sessions}/>}
         {panel==='bio'       && <Biometria bios={data.bios} addBio={data.addBio}/>}
         {panel==='diario'    && <Diario diary={data.diary} raw={data.raw} sessions={data.sessions} focusDate={focusDate} onClearFocus={()=>setFocusDate(null)} onDelete={data.deleteSession} onDeleteDiary={data.deleteDiary} onDeleteRaw={data.deleteRaw}/>}
-        {panel==='entreno'   && <EntrenoHub onSessionComplete={data.load} onSave={async (s,d,r,b) => { if(b){await data.addBio(b);}else{if(s)await data.addSession(s);if(d)await data.addDiary(d);if(r)await data.addRaw(r);} await data.load(); }}/>}
+        {panel==='entreno'   && <EntrenoHub dietData={dietData} onSessionComplete={data.load} onSave={async (s,d,r,b) => { if(b){await data.addBio(b);}else{if(s)await data.addSession(s);if(d)await data.addDiary(d);if(r)await data.addRaw(r);} await data.load(); }}/>}
       </main>
     </div>
   );

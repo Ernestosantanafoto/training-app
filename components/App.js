@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 import { useTrainingData } from '../lib/useTrainingData';
+import { supabase } from '../lib/supabase';
 import { fmtDate, fmtShort, getIntensity, BIO_FIELDS, typeColor, isCardioType } from '../lib/helpers';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 import Entrenador from './Entrenador';
@@ -602,6 +603,7 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
   const [garminOpen, setGarminOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   if (view === 'gymfire') return (
     <div>
@@ -658,8 +660,16 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
             <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>RESUMEN PARA GENERAR NUEVO PROTOCOLO</div>
           </div>
         </button>
+        <button onClick={() => setImportOpen(true)} style={{width:'100%',padding:'20px 20px',background:'rgba(232,255,71,0.04)',border:'1px solid rgba(232,255,71,0.25)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
+          <span style={{fontSize:28,color:'var(--ac)'}}>↧</span>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--ac)'}}>CARGAR PROTOCOLO</div>
+            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>PEGA EL PROTOCOLO GENERADO EN EL CHAT</div>
+          </div>
+        </button>
 
       </div>
+      {importOpen && <DImportProtocolModal onClose={()=>setImportOpen(false)}/>}
       {exportOpen && <DExportModal sessions={sessions} onClose={()=>setExportOpen(false)}/>}
       {reviewOpen && <DReviewModal onClose={()=>setReviewOpen(false)} onSave={async(r)=>{ if(dietData) await dietData.addPhoto(r); setReviewOpen(false); }}/>}
       {garminOpen && <DGarminModal onClose={()=>setGarminOpen(false)} onSave={async(days)=>{ if(dietData) await dietData.addGarminDays(days); setGarminOpen(false); }}/>}
@@ -1316,6 +1326,114 @@ function DPantryModal({ D, onClose }) {
   );
 }
 const dPInput={width:'100%',fontSize:15,padding:7,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'};
+const DAY_PALETTE = ['#e8ff47','#47b8ff','#ff6b47','#b494e8','#1d9e75','#ef9f27'];
+
+function validateProtocol(text) {
+  // tolera fences ```json y texto alrededor
+  let t = String(text || '').trim().replace(/```json/gi, '```');
+  const fence = t.match(/```([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  const braceStart = t.indexOf('{');
+  const braceEnd = t.lastIndexOf('}');
+  if (braceStart === -1 || braceEnd === -1) return { error: 'No encuentro un JSON en el texto.' };
+  let p;
+  try { p = JSON.parse(t.slice(braceStart, braceEnd + 1)); }
+  catch (e) { return { error: 'JSON inválido: ' + e.message.slice(0, 80) }; }
+  if (typeof p.week !== 'number') return { error: 'Falta "week" (número de semana).' };
+  if (!Array.isArray(p.days) || !p.days.length) return { error: 'Falta "days" (lista de días).' };
+  const VALID_TYPES = ['warmup','superset','main','circuit','core'];
+  for (let di = 0; di < p.days.length; di++) {
+    const d = p.days[di];
+    if (!d.name) return { error: `Día ${di+1}: falta "name".` };
+    if (d.id === undefined) d.id = String(di + 1);
+    if (!d.emoji) d.emoji = '🔥';
+    if (!d.color) d.color = DAY_PALETTE[di % DAY_PALETTE.length];
+    if (!Array.isArray(d.blocks) || !d.blocks.length) return { error: `Día "${d.name}": falta "blocks".` };
+    for (const b of d.blocks) {
+      if (!b.name) return { error: `Día "${d.name}": un bloque sin "name".` };
+      if (!VALID_TYPES.includes(b.type)) b.type = 'main';
+      if (!Array.isArray(b.exercises)) return { error: `Bloque "${b.name}": falta "exercises".` };
+      for (const ex of b.exercises) {
+        if (!ex.name) return { error: `Bloque "${b.name}": ejercicio sin "name".` };
+        if (!Array.isArray(ex.sets) || !ex.sets.length) return { error: `Ejercicio "${ex.name}": falta "sets".` };
+        for (const s of ex.sets) {
+          if (s.reps === undefined) return { error: `Ejercicio "${ex.name}": un set sin "reps".` };
+          if (s.weight === undefined) s.weight = null;
+        }
+      }
+    }
+  }
+  return { protocol: p };
+}
+
+function DImportProtocolModal({ onClose }) {
+  const [paste, setPaste] = useState('');
+  const [result, setResult] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const analyze = (txt) => { const r = validateProtocol(txt !== undefined ? txt : paste); setResult(r); };
+  const pasteClip = async () => {
+    try { const t = await navigator.clipboard.readText(); if (t) { setPaste(t); analyze(t); } } catch (e) {}
+  };
+  const save = async () => {
+    if (!result || !result.protocol) return;
+    setSaving(true); setErr(null);
+    const { error } = await supabase.from('protocols').insert({ week: result.protocol.week, protocol_data: result.protocol });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setDone(true);
+  };
+
+  const p = result && result.protocol;
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>CARGAR PROTOCOLO</h3>
+      {done ? (
+        <div>
+          <p style={{fontSize:13,color:'var(--ac)',margin:'14px 0'}}>✓ Protocolo SEMANA {p.week} activo.</p>
+          <p style={{fontSize:11,opacity:.6,margin:'0 0 14px'}}>Ábrelo en ⚡ → PROTOCOLO DE ENTRENAMIENTO. El anterior queda guardado como historial.</p>
+          <button onClick={onClose} style={{width:'100%',background:'var(--ac)',border:'none',padding:'12px 14px',fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#111',cursor:'pointer',fontFamily:"'DM Mono',monospace"}}>LISTO</button>
+        </div>
+      ) : (
+        <div>
+          <p style={{fontSize:11,opacity:.55,margin:'0 0 10px'}}>Pega aquí el protocolo (JSON) que te devuelve el chat. Se valida antes de activarlo.</p>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:6}}>
+            <button onClick={pasteClip} style={{fontSize:10,background:'rgba(255,255,255,0.06)',border:'1px solid var(--ac)',color:'var(--ac)',padding:'6px 10px',cursor:'pointer',fontFamily:"'DM Mono',monospace"}}>📋 PEGAR</button>
+          </div>
+          <textarea value={paste} onChange={e=>{setPaste(e.target.value); setResult(null);}}
+            placeholder='{"week": 24, "days": [ ... ]}'
+            style={{width:'100%',minHeight:110,fontSize:11,padding:10,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',color:'var(--tx)',boxSizing:'border-box',fontFamily:"'DM Mono',monospace"}}/>
+          {!result && <button onClick={()=>analyze()} disabled={!paste.trim()} style={{width:'100%',marginTop:10,background:'var(--ac)',border:'none',padding:'12px 14px',fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#111',cursor:'pointer',fontFamily:"'DM Mono',monospace",opacity:paste.trim()?1:.4}}>ANALIZAR</button>}
+          {result && result.error && <p style={{fontSize:11,color:'#e24b4a',marginTop:10}}>⚠ {result.error}</p>}
+          {p && (
+            <div style={{marginTop:12}}>
+              <div style={{fontSize:11,color:'var(--ac)',letterSpacing:1,marginBottom:8,fontFamily:"'DM Mono',monospace"}}>SEMANA {p.week} · {p.days.length} DÍAS</div>
+              {p.days.map((d,i)=>{
+                const nEx = d.blocks.reduce((s,b)=>s+b.exercises.length,0);
+                const nSets = d.blocks.reduce((s,b)=>s+b.exercises.reduce((x,e)=>x+e.sets.length,0),0);
+                return (
+                  <div key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.06)',padding:'6px 0',fontSize:11,display:'flex',gap:8,alignItems:'baseline'}}>
+                    <span style={{color:d.color,fontFamily:"'DM Mono',monospace"}}>D{d.id}</span>
+                    <span style={{flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{d.emoji} {d.name}</span>
+                    <span style={{color:'var(--mu3)',flexShrink:0}}>{d.blocks.length} bloques · {nEx} ej · {nSets} series</span>
+                  </div>
+                );
+              })}
+              {err && <p style={{fontSize:11,color:'#e24b4a',marginTop:8}}>⚠ Error guardando: {err}</p>}
+              <div style={{display:'flex',gap:8,marginTop:12}}>
+                <button onClick={save} disabled={saving} style={{flex:1,background:'var(--ac)',border:'none',padding:'12px 14px',fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#111',cursor:'pointer',fontFamily:"'DM Mono',monospace",opacity:saving?.5:1}}>{saving?'GUARDANDO…':'GUARDAR Y ACTIVAR'}</button>
+                <button onClick={()=>setResult(null)} style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',padding:'9px 14px',fontSize:11,color:'inherit',cursor:'pointer',fontFamily:"'DM Mono',monospace"}}>editar</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </DModal>
+  );
+}
+
 function DExportModal({ sessions, onClose }) {
   const [weeks, setWeeks] = useState(4);
   const [copied, setCopied] = useState(false);

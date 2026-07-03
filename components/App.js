@@ -597,10 +597,11 @@ function MigrateBanner({ onDone }) {
 }
 
 // ── EntrenoHub ────────────────────────────────────────────────
-function EntrenoHub({ onSessionComplete, onSave, dietData }) {
+function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
   const [view, setView] = useState('menu');
   const [garminOpen, setGarminOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   if (view === 'gymfire') return (
     <div>
@@ -650,8 +651,16 @@ function EntrenoHub({ onSessionComplete, onSave, dietData }) {
             <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>VALORACIÓN DE FOTO · CINTURA · PESO</div>
           </div>
         </button>
+        <button onClick={() => setExportOpen(true)} style={{width:'100%',padding:'20px 20px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
+          <span style={{fontSize:28,color:'var(--mu3)'}}>↥</span>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--mu3)'}}>EXPORTAR ENTRENOS</div>
+            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>RESUMEN PARA GENERAR NUEVO PROTOCOLO</div>
+          </div>
+        </button>
 
       </div>
+      {exportOpen && <DExportModal sessions={sessions} onClose={()=>setExportOpen(false)}/>}
       {reviewOpen && <DReviewModal onClose={()=>setReviewOpen(false)} onSave={async(r)=>{ if(dietData) await dietData.addPhoto(r); setReviewOpen(false); }}/>}
       {garminOpen && <DGarminModal onClose={()=>setGarminOpen(false)} onSave={async(days)=>{ if(dietData) await dietData.addGarminDays(days); setGarminOpen(false); }}/>}
     </div>
@@ -675,7 +684,6 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   const [aiPreview, setAiPreview] = useState(null);
   const [meal, setMeal] = useState(() => { const v = loadUI('meal','desayuno'); return MEALS.includes(v) ? v : 'desayuno'; });
   const [newOpen, setNewOpen] = useState(false);
-  const [editMode, setEditMode] = useState(false);
   const [pantryOpen, setPantryOpen] = useState(false);
   const [qty, setQty] = useState(1);
   const [dayPopup, setDayPopup] = useState(null);
@@ -868,7 +876,6 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
       {/* Lista de platos ordenada por frecuencia de uso */}
       <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginBottom:6}}>
         <button onClick={()=>setPantryOpen(true)} style={dMini}>▤ DESPENSA</button>
-        <button onClick={()=>setEditMode(v=>!v)} style={{...dMini,borderColor:editMode?TEAL:'var(--bd2)',color:editMode?TEAL:'var(--mu3)'}}>{editMode?'✓ listo':'editar lista'}</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:8,marginBottom:10}}>
         <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -876,21 +883,16 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
         </button>
         {ranked.map(t=>(
           <div key={t.id} style={{position:'relative',minWidth:0}}>
-            <button onClick={()=>editMode?null:addTpl(t)} style={{...dTpl,width:'100%',opacity:editMode?.6:1}}>
+            <button onClick={()=>addTpl(t)} style={{...dTpl,width:'100%'}}>
               <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3,minWidth:0}}>
                 <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
                 <span style={{fontSize:13,fontWeight:500,flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.name}{t.estimated?' ~':''}</span>
               </div>
               <span style={{fontSize:11,opacity:.55,display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.kcal} kcal · {t.protein} g</span>
             </button>
-            {editMode && (
-              <button onClick={()=>{ if(confirm('¿Borrar "'+t.name+'" de tu lista?')) D.deleteTemplate(t.id); }}
-                style={{position:'absolute',top:-6,right:-6,width:22,height:22,borderRadius:'50%',background:'#e24b4a',border:'none',color:'#fff',fontSize:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>×</button>
-            )}
           </div>
         ))}
       </div>
-      {editMode && <p style={{fontSize:10,opacity:.4,margin:'0 0 10px'}}>Pulsa la × para borrar cualquier elemento de tu lista.</p>}
 
       {/* lista del día */}
       {totals.items.length>0 && (
@@ -1314,6 +1316,42 @@ function DPantryModal({ D, onClose }) {
   );
 }
 const dPInput={width:'100%',fontSize:15,padding:7,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',color:'inherit',boxSizing:'border-box'};
+function DExportModal({ sessions, onClose }) {
+  const [weeks, setWeeks] = useState(4);
+  const [copied, setCopied] = useState(false);
+  const text = useMemo(() => {
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - weeks * 7);
+    const cs = cutoff.toLocaleDateString('en-CA');
+    const gym = (sessions || [])
+      .filter(s => s && s.date >= cs && s.type === 'gym')
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    if (!gym.length) return `Sin sesiones de gym en las últimas ${weeks} semanas.`;
+    const lines = [`ENTRENOS GYM · últimas ${weeks} semanas · ${gym.length} sesiones`, ''];
+    gym.forEach(s => {
+      lines.push(`## ${s.date}${s.muscles && s.muscles.length ? ' · ' + s.muscles.filter(m=>m!=='Cardio').join(', ') : ''}`);
+      const exs = (s.exercises || []).filter(e => e.n).map(e => `${e.n} ${e.kg || 0}x${e.r || '?'}`);
+      if (exs.length) lines.push(exs.join(' · '));
+      if (s.notes) lines.push(`Notas: ${String(s.notes).slice(0, 160)}`);
+      lines.push('');
+    });
+    return lines.join('\n');
+  }, [sessions, weeks]);
+  const copy = () => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>EXPORTAR ENTRENOS</h3>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 12px'}}>Resumen de tus sesiones de gym para pegárselo al chat y generar un nuevo protocolo.</p>
+      <div style={{display:'flex',gap:6,marginBottom:12}}>
+        {[2,4,8].map(w => (
+          <button key={w} onClick={()=>setWeeks(w)} style={{flex:1,fontSize:11,padding:'8px 0',cursor:'pointer',fontFamily:"'DM Mono',monospace",background:weeks===w?'rgba(232,255,71,0.1)':'transparent',border:weeks===w?'1px solid var(--ac)':'1px solid var(--bd2)',color:weeks===w?'var(--ac)':'var(--mu3)'}}>{w} sem</button>
+        ))}
+      </div>
+      <textarea readOnly value={text}
+        style={{width:'100%',minHeight:180,fontSize:11,padding:10,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',color:'var(--tx)',boxSizing:'border-box',fontFamily:"'DM Mono',monospace",lineHeight:1.5}}/>
+      <button onClick={copy} style={{width:'100%',marginTop:10,background:'var(--ac)',border:'none',padding:'12px 14px',fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#111',cursor:'pointer',fontFamily:"'DM Mono',monospace"}}>{copied ? '✓ COPIADO' : '⎘ COPIAR TODO'}</button>
+    </DModal>
+  );
+}
 const DField=({label,value,onChange,placeholder,type='text'})=>(
   <div style={{flex:1,marginBottom:10}}>
     <label style={{fontSize:11,opacity:.6}}>{label}</label>
@@ -1409,7 +1447,7 @@ export default function App() {
         {panel==='prs'       && <PRs sessions={data.sessions} dietData={dietData}/>}
         {panel==='bio'       && <Biometria bios={data.bios} addBio={data.addBio}/>}
         {panel==='diario'    && <Diario diary={data.diary} raw={data.raw} sessions={data.sessions} focusDate={focusDate} onClearFocus={()=>setFocusDate(null)} onDelete={data.deleteSession} onDeleteDiary={data.deleteDiary} onDeleteRaw={data.deleteRaw}/>}
-        {panel==='entreno'   && <EntrenoHub dietData={dietData} onSessionComplete={data.load} onSave={async (s,d,r,b) => { if(b){await data.addBio(b);}else{if(s)await data.addSession(s);if(d)await data.addDiary(d);if(r)await data.addRaw(r);} await data.load(); }}/>}
+        {panel==='entreno'   && <EntrenoHub dietData={dietData} sessions={data.sessions} onSessionComplete={data.load} onSave={async (s,d,r,b) => { if(b){await data.addBio(b);}else{if(s)await data.addSession(s);if(d)await data.addDiary(d);if(r)await data.addRaw(r);} await data.load(); }}/>}
       </main>
     </div>
   );

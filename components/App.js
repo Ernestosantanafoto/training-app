@@ -674,6 +674,74 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
   );
 }
 
+// ── PULSO: briefing diario que cruza todos los datos ──────────
+function PulsoCard({ sessions, dietData }) {
+  const [text, setText] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const D = dietData;
+  const ready = !!(D && !D.loading && (((D.garmin || []).length) || ((D.entries || []).length)));
+
+  const gen = async () => {
+    setBusy(true); setFailed(false);
+    try {
+      const today = TODAY_STR();
+      const wk = new Date(); wk.setDate(wk.getDate() - 7);
+      const ws = wk.toLocaleDateString('en-CA');
+      const byDate = {};
+      (D.entries || []).forEach(e => { const t = byDate[e.date] || (byDate[e.date] = { k: 0, p: 0 }); t.k += e.kcal || 0; t.p += Number(e.protein) || 0; });
+      const snapshot = {
+        hoy: today,
+        objetivo: { kcal: (D.target && D.target.kcal_target) || 2800, proteina_g: (D.target && D.target.protein_target) || 160 },
+        racha_dieta: calcStreak(D.entries || [], D.freeDays || []),
+        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: g.date, gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps })),
+        dieta_7d: Object.entries(byDate).filter(([d]) => d >= ws).sort().map(([d, v]) => ({ d, kcal: Math.round(v.k), prot: Math.round(v.p) })),
+        entrenos_7d: (sessions || []).filter(s => s && s.date >= ws).map(s => ({ d: s.date, tipo: s.type, musculos: (s.muscles || []).slice(0, 4) })),
+        dias_libres: (D.freeDays || []).map(f => f.date).filter(d => d >= ws),
+      };
+      const r = await fetch('/api/coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot }) });
+      const data = await r.json();
+      if (data.text) { setText(data.text); saveUI('pulso_' + today, data.text); }
+      else setFailed(true);
+    } catch (e) { setFailed(true); }
+    finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!ready) return;
+    const cached = loadUI('pulso_' + TODAY_STR(), null);
+    if (cached) { setText(cached); return; }
+    gen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  if (!ready) return null;
+  const SYM = { '◐': '#b494e8', '⌁': '#1d9e75', '⚡': 'var(--ac)', '◆': '#ef9f27' };
+  return (
+    <div style={{ background: 'var(--sf)', border: '1px solid var(--bd2)', padding: '12px 14px', marginBottom: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: text ? 8 : 0 }}>
+        <span style={{ fontSize: 9, letterSpacing: 2, color: 'var(--mu3)', fontFamily: "'DM Mono',monospace" }}>◈ PULSO DE HOY</span>
+        <button onClick={gen} disabled={busy} style={{ background: 'none', border: 'none', color: 'var(--mu)', fontSize: 13, cursor: 'pointer', padding: '2px 8px' }}>{busy ? '…' : '↻'}</button>
+      </div>
+      {busy && !text && <div style={{ fontSize: 10, color: 'var(--mu)' }}>leyendo tus datos…</div>}
+      {failed && !text && (
+        <div style={{ fontSize: 10, color: 'var(--mu)' }}>
+          no pude generar el pulso · <button onClick={gen} style={{ background: 'none', border: 'none', color: 'var(--ac)', fontSize: 10, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>reintentar</button>
+        </div>
+      )}
+      {text && text.split('\n').filter(l => l.trim()).slice(0, 5).map((l, i) => {
+        const t = l.trim(); const sym = t[0]; const known = SYM[sym];
+        return (
+          <div key={i} style={{ fontSize: 11, lineHeight: 1.7, display: 'flex', gap: 8 }}>
+            <span style={{ color: known || 'var(--mu3)', flexShrink: 0 }}>{known ? sym : '·'}</span>
+            <span style={{ opacity: .85 }}>{known ? t.slice(1).trim() : t}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── DietaDashboard (modo dieta, acento teal) ──────────────────
 const TEAL = '#1d9e75';
 const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
@@ -1561,6 +1629,7 @@ export default function App() {
             <div className={`diary-tab${dashMode==='entrenos'?' active':''}`} onClick={()=>setDashMode('entrenos')}>Entrenos</div>
             <div className={`diary-tab${dashMode==='dieta'?' active dieta-tab':''}`} onClick={()=>setDashMode('dieta')} style={dashMode==='dieta'?{color:'#1d9e75',borderColor:'#1d9e75'}:{}}>Dieta</div>
           </div>
+          <PulsoCard sessions={data.sessions} dietData={dietData}/>
           <Dashboard sessions={data.sessions} onDayClick={handleDayClick} mode={dashMode} dietData={dietData}/>
         </>}
         {panel==='prs'       && <PRs sessions={data.sessions} dietData={dietData}/>}

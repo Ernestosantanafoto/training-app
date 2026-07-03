@@ -66,6 +66,7 @@ export default function Entrenador({ onSessionComplete }) {
   const [pendingDiary, setPendingDiary]     = useState(null);
   const [aiStatus, setAiStatus]             = useState('idle');
   const [restored, setRestored]             = useState(false);
+  const [openNotes, setOpenNotes]           = useState({});
   const timerRef = useRef(null);
   const restRef  = useRef(null);
 
@@ -390,7 +391,18 @@ export default function Entrenador({ onSessionComplete }) {
               {block.note && <div style={{ fontSize:8, color:'var(--mu)', marginBottom:7, letterSpacing:1.5 }}>{block.note}</div>}
               {block.exercises.map((ex, ei) => (
                 <div key={ei} style={{ background:'var(--sf)', border:'1px solid var(--bd)', borderLeft:`2px solid ${activeDay.color}33`, marginBottom:8 }}>
-                  <div style={{ padding:'8px 12px 6px', borderBottom:'1px solid var(--bd)', fontSize:11, fontWeight:700, color: ex.name.includes('⚠️') ? '#FFD600' : 'var(--mu3)' }}>{ex.name}</div>
+                  <div style={{ padding:'8px 12px 6px', borderBottom:'1px solid var(--bd)', display:'flex', alignItems:'center', gap:8 }}>
+                    <span style={{ flex:1, minWidth:0, fontSize:11, fontWeight:700, color: ex.name.includes('⚠️') ? '#FFD600' : 'var(--mu3)' }}>{ex.name}</span>
+                    {ex.note && (
+                      <button onClick={() => setOpenNotes(p => ({...p, [`${bi}-${ei}`]: !p[`${bi}-${ei}`]}))}
+                        style={{ background:'transparent', border:`1px solid ${openNotes[`${bi}-${ei}`] ? activeDay.color : 'var(--bd2)'}`, color: openNotes[`${bi}-${ei}`] ? activeDay.color : 'var(--mu)', fontSize:8, letterSpacing:1, padding:'4px 9px', cursor:'pointer', fontFamily:"'DM Mono',monospace", flexShrink:0 }}>
+                        ⓘ CÓMO
+                      </button>
+                    )}
+                  </div>
+                  {ex.note && openNotes[`${bi}-${ei}`] && (
+                    <div style={{ padding:'9px 12px', borderBottom:'1px solid var(--bd)', fontSize:10, lineHeight:1.75, color:'var(--mu3)', background:`${activeDay.color}06`, whiteSpace:'pre-wrap' }}>{ex.note}</div>
+                  )}
                   {ex.sets.map((set, si) => {
                     const key = `${bi}-${ei}-${si}`;
                     const isDone = completed[key];

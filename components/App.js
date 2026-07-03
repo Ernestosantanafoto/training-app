@@ -623,52 +623,49 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
 
   return (
     <div>
-      <div className="sl" style={{marginTop:0}}>Entreno</div>
-      <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:28}}>
-        <button onClick={() => setView('gymfire')} style={{width:'100%',padding:'20px 20px',background:'rgba(232,255,71,0.06)',border:'1px solid rgba(232,255,71,0.3)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
-          <span style={{fontSize:28}}>⚡</span>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--ac)'}}>PROTOCOLO DE ENTRENAMIENTO</div>
-            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>GYMFIRE · SESIÓN GUIADA CON TIMER Y LOG</div>
-          </div>
-        </button>
-        <button onClick={() => setView('nueva')} style={{width:'100%',padding:'20px 20px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
-          <span style={{fontSize:28}}>＋</span>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--mu3)'}}>AÑADIR SESIÓN</div>
-            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>TEXTO · IMAGEN · GARMIN · BÁSCULA</div>
-          </div>
-        </button>
-        <button onClick={() => setGarminOpen(true)} style={{width:'100%',padding:'20px 20px',background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.3)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
-          <span style={{fontSize:28,color:'#1d9e75'}}>⌁</span>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'#1d9e75'}}>DATOS GARMIN</div>
-            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>PASOS · SUEÑO · CALORÍAS · FC · BODY BATTERY</div>
-          </div>
-        </button>
-        <button onClick={() => setReviewOpen(true)} style={{width:'100%',padding:'20px 20px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
-          <span style={{fontSize:28,color:'var(--mu3)'}}>◉</span>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--mu3)'}}>REVIEW VISUAL</div>
-            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>VALORACIÓN DE FOTO · CINTURA · PESO</div>
-          </div>
-        </button>
-        <button onClick={() => setExportOpen(true)} style={{width:'100%',padding:'20px 20px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
-          <span style={{fontSize:28,color:'var(--mu3)'}}>↥</span>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--mu3)'}}>EXPORTAR ENTRENOS</div>
-            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>RESUMEN PARA GENERAR NUEVO PROTOCOLO</div>
-          </div>
-        </button>
-        <button onClick={() => setImportOpen(true)} style={{width:'100%',padding:'20px 20px',background:'rgba(232,255,71,0.04)',border:'1px solid rgba(232,255,71,0.25)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16}}>
-          <span style={{fontSize:28,color:'var(--ac)'}}>↧</span>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:'var(--ac)'}}>CARGAR PROTOCOLO</div>
-            <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>PEGA EL PROTOCOLO GENERADO EN EL CHAT</div>
-          </div>
-        </button>
+      {/* ── ACCIÓN PRINCIPAL ── */}
+      <div className="sl" style={{marginTop:0}}>Entrenar</div>
+      <button onClick={() => setView('gymfire')} style={{width:'100%',padding:'22px 20px',background:'rgba(232,255,71,0.06)',border:'1px solid rgba(232,255,71,0.35)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:16,marginBottom:24}}>
+        <span style={{fontSize:30}}>⚡</span>
+        <div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,color:'var(--ac)'}}>PROTOCOLO DE ENTRENAMIENTO</div>
+          <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>GYMFIRE · SESIÓN GUIADA CON TIMER Y LOG</div>
+        </div>
+      </button>
 
+      {/* ── ENTRADA DE DATOS ── */}
+      <div className="sl">Registrar</div>
+      <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:24}}>
+        {[
+          {ic:'＋', c:'var(--mu3)', t:'AÑADIR SESIÓN', s:'TEXTO · IMAGEN · GARMIN · BÁSCULA', fn:()=>setView('nueva')},
+          {ic:'⌁', c:'#1d9e75', t:'DATOS GARMIN', s:'PASOS · SUEÑO · CALORÍAS · FC · BODY BATTERY', fn:()=>setGarminOpen(true)},
+          {ic:'◉', c:'var(--mu3)', t:'REVIEW VISUAL', s:'VALORACIÓN DE FOTO · CINTURA · PESO', fn:()=>setReviewOpen(true)},
+        ].map((b,i)=>(
+          <button key={i} onClick={b.fn} style={{width:'100%',padding:'14px 16px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:14}}>
+            <span style={{fontSize:20,color:b.c,width:24,textAlign:'center',flexShrink:0}}>{b.ic}</span>
+            <div style={{minWidth:0}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,letterSpacing:2,color:b.c}}>{b.t}</div>
+              <div style={{fontSize:8,color:'var(--mu)',letterSpacing:1.5,marginTop:2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{b.s}</div>
+            </div>
+          </button>
+        ))}
       </div>
+
+      {/* ── CICLO SEMANAL: exportar -> chat -> cargar ── */}
+      <div className="sl">Ciclo del protocolo</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:6,marginBottom:28}}>
+        <button onClick={() => setExportOpen(true)} style={{padding:'16px 12px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'center'}}>
+          <div style={{fontSize:22,color:'var(--mu3)',marginBottom:4}}>↥</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:'var(--mu3)'}}>EXPORTAR</div>
+          <div style={{fontSize:8,color:'var(--mu)',letterSpacing:1,marginTop:2}}>RESUMEN → CHAT</div>
+        </button>
+        <button onClick={() => setImportOpen(true)} style={{padding:'16px 12px',background:'rgba(232,255,71,0.04)',border:'1px solid rgba(232,255,71,0.3)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'center'}}>
+          <div style={{fontSize:22,color:'var(--ac)',marginBottom:4}}>↧</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:'var(--ac)'}}>CARGAR</div>
+          <div style={{fontSize:8,color:'var(--mu)',letterSpacing:1,marginTop:2}}>CHAT → PROTOCOLO</div>
+        </button>
+      </div>
+
       {importOpen && <DImportProtocolModal onClose={()=>setImportOpen(false)}/>}
       {exportOpen && <DExportModal sessions={sessions} onClose={()=>setExportOpen(false)}/>}
       {reviewOpen && <DReviewModal onClose={()=>setReviewOpen(false)} onSave={async(r)=>{ if(dietData) await dietData.addPhoto(r); setReviewOpen(false); }}/>}
@@ -1329,8 +1326,12 @@ const dPInput={width:'100%',fontSize:15,padding:7,background:'rgba(255,255,255,0
 const DAY_PALETTE = ['#e8ff47','#47b8ff','#ff6b47','#b494e8','#1d9e75','#ef9f27'];
 
 function validateProtocol(text) {
-  // tolera fences ```json y texto alrededor
-  let t = String(text || '').trim().replace(/```json/gi, '```');
+  // tolera fences ```json, texto alrededor, y comillas tipograficas de iOS
+  let t = String(text || '').trim()
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')   // " " „ -> "
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")          // ' ' -> '
+    .replace(/\u00A0/g, ' ')                                // espacios duros iOS
+    .replace(/```json/gi, '```');
   const fence = t.match(/```([\s\S]*?)```/);
   if (fence) t = fence[1].trim();
   const braceStart = t.indexOf('{');

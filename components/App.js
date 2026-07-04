@@ -745,6 +745,7 @@ function PulsoCard({ sessions, dietData }) {
 // ── DietaDashboard (modo dieta, acento teal) ──────────────────
 const TEAL = '#1d9e75';
 const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
+const TIER_BORDER = { verde:'rgba(29,158,117,0.45)', goloso:'rgba(239,159,39,0.45)', pecado:'rgba(226,75,74,0.5)' };
 const ST_COLOR = { verde:'#1d9e75', ambar:'#ef9f27', rojo:'#e24b4a', none:'rgba(255,255,255,0.12)' };
 const fmtN = n => Math.round(n).toLocaleString('es-ES');
 const TODAY_STR = () => new Date().toLocaleDateString('en-CA'); // fecha LOCAL, no UTC
@@ -763,7 +764,9 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   const [qty, setQty] = useState(1);
   const [dayPopup, setDayPopup] = useState(null);
   const [aiErr, setAiErr] = useState(null);
+  const [dtab, setDtab] = useState(() => loadUI('dietTab','add'));
   useEffect(() => { saveUI('meal', meal); }, [meal]);
+  useEffect(() => { saveUI('dietTab', dtab); }, [dtab]);
 
   // Agrupar registros por fecha UNA vez (evita filtrar todo el array por cada celda)
   const totalsByDate = useMemo(() => {
@@ -813,8 +816,11 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   const streak = streakMemo;
   const kcalPct = Math.min(100,(totals.kcal/kcalTarget)*100);
   const protPct = Math.min(100,(totals.protein/protTarget)*100);
-  const kcalLeft = Math.max(0,kcalTarget-totals.kcal);
   const selGarmin = garminByDate[sel];
+  // objetivo de CADA día: si ese día tiene gasto Garmin, su objetivo real fue (gasto − 600); si no, el global
+  const dayTargetFor = ds => { const g = garminByDate[ds]; const k = g && g.kcal_total; return (k && k > 1200) ? Math.min(3200, Math.max(2300, Math.round((k - 600) / 10) * 10)) : kcalTarget; };
+  const selTarget = dayTargetFor(sel);
+  const kcalLeft = Math.max(0,selTarget-totals.kcal);
   const sleepInfo = (selGarmin && selGarmin.sleep_h!=null)
     ? { h:selGarmin.sleep_h, score:selGarmin.sleep_score, own:true }
     : (lastSleep ? { ...lastSleep, own:false } : null);
@@ -865,21 +871,16 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
           </div>
         </div>
         <div style={{flex:1,display:'flex',flexDirection:'column',gap:11}}>
-          <DBar label="Calorías" color="#378add" cur={totals.kcal} max={kcalTarget} right={`${fmtN(kcalLeft)} rest.`}/>
+          <DBar label="Calorías" color="#378add" cur={totals.kcal} max={selTarget} right={`${fmtN(kcalLeft)} rest.`}/>
           <DBar label="Proteína" color={TEAL} cur={totals.protein} max={protTarget} right={`${Math.round(totals.protein)}/${protTarget} g`}/>
           <div style={{display:'flex',flexDirection:'column',gap:2}}>
             {dynInfo && <span style={{fontSize:9,color:'var(--mu3)',letterSpacing:.3}}>◎ objetivo según tu gasto real · media {dynInfo.days}d: {fmtN(dynInfo.avg)} kcal</span>}
             {sleepInfo && <span style={{fontSize:9,color:sleepInfo.h<7?'#ef9f27':'var(--mu3)',letterSpacing:.3}}>◐ sueño{sleepInfo.own?'':` (últ. ${fmtShort(sleepInfo.date)})`} {Math.floor(sleepInfo.h)}h{String(Math.round((sleepInfo.h%1)*60)).padStart(2,'0')}{sleepInfo.score?` · punt. ${sleepInfo.score}`:''}{sleepInfo.h<7?' · corto':''}</span>}
             {selGarmin && selGarmin.kcal_total>0 && <span style={{fontSize:9,color:'var(--mu3)',letterSpacing:.3}}>⌁ gasto {sel===TODAY_STR()?'hoy':'ese día'}: {fmtN(selGarmin.kcal_total)} · balance {totals.kcal-selGarmin.kcal_total>0?'+':''}{fmtN(totals.kcal-selGarmin.kcal_total)}</span>}
+            {selTarget!==kcalTarget && <span style={{fontSize:9,color:TEAL,letterSpacing:.3}}>◎ objetivo de ese día: {fmtN(selTarget)} · ajustado a su gasto real</span>}
           </div>
           {sel!==TODAY_STR() && <button onClick={()=>setSel(TODAY_STR())} style={dMini}>← volver a hoy</button>}
         </div>
-      </div>
-
-      {/* Día libre toggle */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,padding:'8px 12px',background:selIsFree?'rgba(255,255,255,0.04)':'transparent',border:selIsFree?'1px solid var(--bd2)':'1px solid transparent'}}>
-        <span style={{fontSize:11,color:selIsFree?'var(--mu)':'var(--mu3)'}}>{selIsFree?'Día libre — no se mide (mantiene racha)':'¿Hoy comes fuera y no mides?'}</span>
-        <button onClick={()=>D.setFreeDay(sel,!selIsFree)} style={{...dMini,borderColor:selIsFree?TEAL:'var(--bd2)',color:selIsFree?TEAL:'var(--mu3)'}}>{selIsFree?'✓ libre':'marcar libre'}</button>
       </div>
 
       {/* Calendar (mismo, coloreado por cumplimiento) */}
@@ -901,10 +902,11 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
           const isFree=freeSet.has(ds);
           const hasEst=t.items.some(it=>it.estimated);
           const isPast=ds<TODAY_STR();
-          const st=isFree?'free':dayStatus(t.kcal,kcalTarget,t.protein,protTarget,isPast);
+          const tgt=dayTargetFor(ds);
+          const st=isFree?'free':dayStatus(t.kcal,tgt,t.protein,protTarget,isPast);
           const isSel=ds===sel;
           const dotColor=st==='free'?'var(--mu2)':ST_COLOR[st];
-          const kPct=Math.min(100,(t.kcal/kcalTarget)*100);
+          const kPct=Math.min(100,(t.kcal/tgt)*100);
           const pPct=Math.min(100,(t.protein/protTarget)*100);
           const hasData=t.items.length>0;
           return (
@@ -927,8 +929,14 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
       </div>
       <p style={{fontSize:9,color:'var(--mu)',letterSpacing:.5,margin:'-14px 0 16px',textAlign:'right'}}>toca un día para seleccionarlo · tócalo otra vez para ver su detalle</p>
 
+      {/* Añadir | Hoy */}
+      <div className="diary-tabs" style={{marginBottom:14}}>
+        <div className={`diary-tab${dtab==='add'?' active':''}`} onClick={()=>setDtab('add')} style={dtab==='add'?{color:TEAL,borderColor:TEAL}:{}}>Añadir</div>
+        <div className={`diary-tab${dtab==='hoy'?' active':''}`} onClick={()=>setDtab('hoy')} style={dtab==='hoy'?{color:TEAL,borderColor:TEAL}:{}}>{sel===TODAY_STR()?'Hoy':fmtShort(sel)}{totals.items.length?` · ${totals.items.length}`:''}</div>
+      </div>
+
+      {dtab==='add' && (<>
       {/* Selector de momento del día */}
-      <div className="sl">Añadir · {sel===TODAY_STR()?'hoy':sel}</div>
       <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:12}}>
         {MEALS.map(m=>(
           <button key={m} onClick={()=>setMeal(m)}
@@ -958,9 +966,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
         </button>
         {ranked.map(t=>(
           <div key={t.id} style={{position:'relative',minWidth:0}}>
-            <button onClick={()=>addTpl(t)} style={{...dTpl,width:'100%'}}>
-              <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3,minWidth:0}}>
-                <span style={{width:8,height:8,borderRadius:'50%',background:TIER_COLOR[t.tier]||'#888',flexShrink:0}}/>
+            <button onClick={()=>addTpl(t)} style={{...dTpl,width:'100%',borderColor:TIER_BORDER[t.tier]||'var(--bd2)'}}>
+              <div style={{display:'flex',alignItems:'center',marginBottom:3,minWidth:0}}>
                 <span style={{fontSize:13,fontWeight:500,flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.name}{t.estimated?' ~':''}</span>
               </div>
               <span style={{fontSize:11,opacity:.55,display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.kcal} kcal · {t.protein} g</span>
@@ -969,7 +976,17 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
         ))}
       </div>
 
+      <button onClick={()=>setTextOpen(true)} style={{...dMini,width:'100%',marginBottom:14,textAlign:'center',padding:'12px'}}>✎ OTRA COMIDA · LA DESCRIBES Y LA IA LA ESTIMA</button>
+      </>)}
+
+      {dtab==='hoy' && (<>
+      {/* Día libre toggle */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,padding:'8px 12px',background:selIsFree?'rgba(255,255,255,0.04)':'transparent',border:selIsFree?'1px solid var(--bd2)':'1px solid transparent'}}>
+        <span style={{fontSize:11,color:selIsFree?'var(--mu)':'var(--mu3)'}}>{selIsFree?'Día libre — no se mide (mantiene racha)':'¿Comes fuera y no mides?'}</span>
+        <button onClick={()=>D.setFreeDay(sel,!selIsFree)} style={{...dMini,borderColor:selIsFree?TEAL:'var(--bd2)',color:selIsFree?TEAL:'var(--mu3)'}}>{selIsFree?'✓ libre':'marcar libre'}</button>
+      </div>
       {/* lista del día */}
+      {totals.items.length===0 && !selIsFree && <p style={{fontSize:11,opacity:.4,margin:'2px 0 14px'}}>Nada registrado este día todavía. Pásate a "Añadir".</p>}
       {totals.items.length>0 && (
         <div style={{marginBottom:14}}>
           {totals.items.map(it=>(
@@ -986,6 +1003,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
           ))}
         </div>
       )}
+      </>)}
 
       {/* Progreso visual: log de reviews en texto */}
       <div className="sl">Progreso visual</div>
@@ -1029,7 +1047,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
       {newOpen && <DNewItemModal meal={meal} onClose={()=>setNewOpen(false)}
         onCreate={async(item,addToday)=>{ await D.createTemplate(item); if(addToday){ await D.addEntry({date:sel,meal,name:item.name,kcal:item.kcal,protein:item.protein,source:'plantilla',estimated:item.estimated,qty}); } setNewOpen(false); }}/>}
       {pantryOpen && <DPantryModal D={D} onClose={()=>setPantryOpen(false)}/>}
-      {dayPopup && <DDayDetailModal D={D} date={dayPopup} kcalTarget={kcalTarget} protTarget={protTarget} isFree={freeSet.has(dayPopup)} garmin={garminByDate[dayPopup]} onClose={()=>setDayPopup(null)}/>}
+      {dayPopup && <DDayDetailModal D={D} date={dayPopup} kcalTarget={dayTargetFor(dayPopup)} protTarget={protTarget} isFree={freeSet.has(dayPopup)} garmin={garminByDate[dayPopup]} onClose={()=>setDayPopup(null)}/>}
     </div>
   );
 }
@@ -1257,6 +1275,7 @@ function DDayDetailModal({ D, date, kcalTarget, protTarget, isFree, garmin, onCl
             </div>
           </div>
 
+          {garmin && garmin.kcal_total>0 && <p style={{fontSize:9,color:'var(--mu3)',margin:'-8px 0 12px'}}>◎ objetivo de ese día ajustado a su gasto real (gasto − 600)</p>}
           {/* balance real del dia (si hay datos garmin) */}
           {garmin && garmin.kcal_total > 0 && (() => {
             const bal = Math.round(t.kcal - garmin.kcal_total);

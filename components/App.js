@@ -598,12 +598,13 @@ function MigrateBanner({ onDone }) {
 }
 
 // ── EntrenoHub ────────────────────────────────────────────────
-function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
+function EntrenoHub({ onSessionComplete, onSave, dietData, sessions, bios }) {
   const [view, setView] = useState('menu');
   const [garminOpen, setGarminOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [fullOpen, setFullOpen] = useState(false);
 
   if (view === 'gymfire') return (
     <div>
@@ -666,6 +667,16 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions }) {
         </button>
       </div>
 
+      {/* ── SISTEMA ── */}
+      <div className="sl">Sistema</div>
+      <button onClick={() => setFullOpen(true)} style={{width:'100%',padding:'13px 16px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--tx)',fontFamily:"'DM Mono',monospace",cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:14,marginBottom:28}}>
+        <span style={{fontSize:18,color:'var(--mu3)',width:24,textAlign:'center',flexShrink:0}}>⎔</span>
+        <div style={{minWidth:0}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:'var(--mu3)'}}>EXPORTAR TODO</div>
+          <div style={{fontSize:8,color:'var(--mu)',letterSpacing:1.5,marginTop:2}}>VOLCADO COMPLETO PARA AUDITAR EN EL CHAT</div>
+        </div>
+      </button>
+      {fullOpen && <DFullExportModal sessions={sessions} dietData={dietData} bios={bios} onClose={()=>setFullOpen(false)}/>}
       {importOpen && <DImportProtocolModal onClose={()=>setImportOpen(false)}/>}
       {exportOpen && <DExportModal sessions={sessions} onClose={()=>setExportOpen(false)}/>}
       {reviewOpen && <DReviewModal onClose={()=>setReviewOpen(false)} onSave={async(r)=>{ if(dietData) await dietData.addPhoto(r); setReviewOpen(false); }}/>}
@@ -1522,6 +1533,108 @@ function DImportProtocolModal({ onClose }) {
   );
 }
 
+function DFullExportModal({ sessions, dietData, bios, onClose }) {
+  const D = dietData;
+  const [copied, setCopied] = useState(false);
+  const [protoInfo, setProtoInfo] = useState('cargando…');
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase.from('protocols').select('week,created_at,protocol_data').order('created_at', { ascending: false }).limit(1);
+        if (!alive) return;
+        if (error || !data || !data.length) { setProtoInfo('tabla vacía (usa el DEFAULT hardcodeado)'); return; }
+        const p = data[0];
+        const names = ((p.protocol_data && p.protocol_data.days) || []).map(d => d.name).join(',');
+        setProtoInfo(`activo S${p.week} (${(p.created_at||'').slice(0,10)}) · días: ${names}`);
+      } catch (e) { if (alive) setProtoInfo('no accesible'); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const text = useMemo(() => {
+    const today = TODAY_STR();
+    const L = [];
+    const wk = new Date(); wk.setDate(wk.getDate() - 7); const ws = wk.toLocaleDateString('en-CA');
+    const w8 = new Date(); w8.setDate(w8.getDate() - 56); const w8s = w8.toLocaleDateString('en-CA');
+
+    L.push(`VOLCADO TRAINING LOG · ${today}`);
+
+    // CONFIG
+    const kt = (D.target && D.target.kcal_target) || 2800;
+    const pt = (D.target && D.target.protein_target) || 160;
+    const gpast = (D.garmin || []).filter(g => g.date < today && (g.kcal_total || 0) > 1200).slice(0, 7);
+    const avg = gpast.length ? Math.round(gpast.reduce((s, g) => s + g.kcal_total, 0) / gpast.length) : null;
+    const dyn = avg ? Math.min(3200, Math.max(2300, Math.round((avg - 600) / 10) * 10)) : null;
+    L.push('', '== CONFIG ==');
+    L.push(`objetivo fijo: ${kt}kcal/${pt}p` + (dyn ? ` · dinámico: ${dyn} (media gasto ${avg}, ${gpast.length}d)` : ' · dinámico: sin datos garmin'));
+    L.push(`racha dieta: ${calcStreak(D.entries || [], D.freeDays || [])} · días libres: ${(D.freeDays||[]).map(f=>f.date).join(',') || 'ninguno'}`);
+
+    // GARMIN
+    const gar = [...(D.garmin || [])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    L.push('', `== GARMIN (${gar.length}) ==`, 'fecha|pasos|kcal|fc|sueñoH|punt|bb');
+    gar.forEach(g => L.push([g.date, g.steps??'', g.kcal_total??'', g.resting_hr??'', g.sleep_h??'', g.sleep_score??'', g.body_battery??''].join('|')));
+
+    // DIETA por dia
+    const byDate = {};
+    (D.entries || []).forEach(e => { const t = byDate[e.date] || (byDate[e.date] = { k:0, p:0, items:[] }); t.k += e.kcal||0; t.p += Number(e.protein)||0; t.items.push(e); });
+    const days = Object.keys(byDate).sort();
+    const freeSet = new Set((D.freeDays||[]).map(f=>f.date));
+    L.push('', `== DIETA POR DÍA (${days.length}) ==`, 'fecha|kcal|prot|items|flags');
+    days.forEach(d => L.push([d, Math.round(byDate[d].k), Math.round(byDate[d].p), byDate[d].items.length, freeSet.has(d)?'LIBRE':''].join('|')));
+    L.push('', '— detalle últimos 7 días —');
+    days.filter(d => d >= ws).forEach(d => {
+      const items = byDate[d].items.map(it => `${(it.meal||'?')[0].toUpperCase()}:${it.name}×${it.qty||1}(${it.kcal}/${Math.round(it.protein)})${it.estimated?'~':''}`).join(' ');
+      L.push(`${d}: ${items}`);
+    });
+
+    // DESPENSA
+    const counts = {};
+    (D.entries || []).forEach(e => { if (e.name) counts[e.name] = (counts[e.name]||0)+1; });
+    L.push('', `== DESPENSA (${(D.templates||[]).length}) ==`, 'nombre|kcal|prot|tier|usos');
+    [...(D.templates||[])].sort((a,b)=>(counts[b.name]||0)-(counts[a.name]||0)).forEach(t =>
+      L.push([t.name, t.kcal, t.protein, t.tier||'', counts[t.name]||0].join('|') + (t.estimated?' ~':'')));
+
+    // ENTRENOS (8 semanas)
+    const ses = (sessions||[]).filter(s => s && s.date >= w8s).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    L.push('', `== ENTRENOS 8SEM (${ses.length}) ==`);
+    ses.forEach(s => {
+      const exs = (s.exercises||[]).filter(e=>e.n).map(e=>`${e.n} ${e.kg||0}x${e.r||'?'}`).join('; ');
+      L.push(`${s.date}|${s.type}|${(s.muscles||[]).join(',')}${exs?'|'+exs:''}`);
+    });
+
+    // REVIEWS
+    L.push('', `== REVIEWS (${(D.photos||[]).length}) ==`);
+    (D.photos||[]).forEach(p => L.push(`${p.date}|${p.waist_cm||'?'}cm|${p.weight_kg||'?'}kg|${(p.assessment||'').replace(/\n/g,' ').slice(0,90)}`));
+
+    // BIO
+    const bs = [...(bios||[])].filter(b=>b&&b.date).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    L.push('', `== BIO (${bs.length}) ==`);
+    bs.forEach(b => {
+      const kv = Object.entries(b).filter(([k,v]) => v!=null && v!=='' && !['id','created_at'].includes(k)).map(([k,v])=>`${k}:${v}`).join(' ');
+      L.push(kv);
+    });
+
+    // PROTOCOLOS
+    L.push('', '== PROTOCOLOS ==', protoInfo);
+
+    return L.join('\n');
+  }, [D, sessions, bios, protoInfo]);
+
+  const copy = () => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(()=>setCopied(false), 2000); };
+
+  return (
+    <DModal onClose={onClose}>
+      <h3 style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,margin:'0 0 4px'}}>EXPORTAR TODO</h3>
+      <p style={{fontSize:11,opacity:.55,margin:'0 0 10px'}}>Volcado completo y condensado de la app. Pégaselo al chat para auditar datos y funcionamiento. {text.length.toLocaleString('es-ES')} caracteres.</p>
+      <textarea readOnly value={text}
+        style={{width:'100%',minHeight:200,fontSize:10,padding:10,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',color:'var(--tx)',boxSizing:'border-box',fontFamily:"'DM Mono',monospace",lineHeight:1.5}}/>
+      <button onClick={copy} style={{width:'100%',marginTop:10,background:'var(--ac)',border:'none',padding:'12px 14px',fontSize:12,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#111',cursor:'pointer',fontFamily:"'DM Mono',monospace"}}>{copied ? '✓ COPIADO' : '⎘ COPIAR TODO'}</button>
+    </DModal>
+  );
+}
+
 function DExportModal({ sessions, onClose }) {
   const [weeks, setWeeks] = useState(4);
   const [copied, setCopied] = useState(false);
@@ -1654,7 +1767,7 @@ export default function App() {
         {panel==='prs'       && <PRs sessions={data.sessions} dietData={dietData}/>}
         {panel==='bio'       && <Biometria bios={data.bios} addBio={data.addBio}/>}
         {panel==='diario'    && <Diario diary={data.diary} raw={data.raw} sessions={data.sessions} focusDate={focusDate} onClearFocus={()=>setFocusDate(null)} onDelete={data.deleteSession} onDeleteDiary={data.deleteDiary} onDeleteRaw={data.deleteRaw}/>}
-        {panel==='entreno'   && <EntrenoHub dietData={dietData} sessions={data.sessions} onSessionComplete={data.load} onSave={async (s,d,r,b) => { if(b){await data.addBio(b);}else{if(s)await data.addSession(s);if(d)await data.addDiary(d);if(r)await data.addRaw(r);} await data.load(); }}/>}
+        {panel==='entreno'   && <EntrenoHub dietData={dietData} sessions={data.sessions} bios={data.bios} onSessionComplete={data.load} onSave={async (s,d,r,b) => { if(b){await data.addBio(b);}else{if(s)await data.addSession(s);if(d)await data.addDiary(d);if(r)await data.addRaw(r);} await data.load(); }}/>}
       </main>
     </div>
   );

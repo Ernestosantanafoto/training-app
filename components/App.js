@@ -291,6 +291,8 @@ function VidaStats({ dietData }) {
       sueno: x.sleep_h ?? null,
       punt: x.sleep_score ?? null,
       bb: x.body_battery ?? null,
+      estres: x.stress ?? null,
+      intensidad: x.intensity_min ?? null,
     }));
   }, [D && D.garmin, D && D.entries]);
 
@@ -306,7 +308,9 @@ function VidaStats({ dietData }) {
       tot += e.kcal || 0;
       if (tr === 'verde') v += e.kcal || 0; else if (tr === 'goloso') g += e.kcal || 0; else p += e.kcal || 0;
     });
-    return tot > 0 ? { v: Math.round(v/tot*100), g: Math.round(g/tot*100), p: Math.round(p/tot*100) } : null;
+    if (tot <= 0) return null;
+    const rv = Math.round(v/tot*100), rg = Math.round(g/tot*100);
+    return { v: rv, g: rg, p: Math.max(0, 100 - rv - rg) };
   }, [D && D.entries, D && D.templates]);
   const fmtH = h => h==null ? '—' : `${Math.floor(h)}h${String(Math.round((h%1)*60)).padStart(2,'0')}`;
 
@@ -348,6 +352,10 @@ function VidaStats({ dietData }) {
         lines={[{k:'pasos',c:'#47b8ff',n:'Pasos'}]}/>
       <VChart title="Body Battery · Δ del día" data={series}
         lines={[{k:'bb',c:'#1d9e75',n:'Body Battery'}]}/>
+      <VChart title="Estrés medio" data={series}
+        lines={[{k:'estres',c:'#ef9f27',n:'Estrés'}]}/>
+      <VChart title="Minutos de intensidad" data={series}
+        lines={[{k:'intensidad',c:'#47b8ff',n:'Min. intensidad'}]}/>
     </div>
   );
 }
@@ -778,10 +786,17 @@ function PulsoCard({ sessions, dietData }) {
         hoy: today,
         objetivo: { kcal: (D.target && D.target.kcal_target) || 2800, proteina_g: (D.target && D.target.protein_target) || 160 },
         racha_dieta: calcStreak(D.entries || [], D.freeDays || []),
-        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: g.date, gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps, bb: g.body_battery })),
+        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: g.date, gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps, bb: g.body_battery, estres: g.stress })),
         dieta_7d: Object.entries(byDate).filter(([d]) => d >= ws).sort().map(([d, v]) => ({ d, kcal: Math.round(v.k), prot: Math.round(v.p) })),
         entrenos_7d: (sessions || []).filter(s => s && s.date >= ws).map(s => ({ d: s.date, tipo: s.type, musculos: (s.muscles || []).slice(0, 4) })),
         dias_libres: (D.freeDays || []).map(f => f.date).filter(d => d >= ws),
+        hoy_ahora: {
+          hora_local: new Date().toTimeString().slice(0, 5),
+          kcal_comidas_hoy: Math.round((byDate[today] || { k: 0 }).k),
+          prot_hoy_g: Math.round((byDate[today] || { p: 0 }).p),
+          sesiones_hoy: todaySes.map(s => s.type),
+          gasto_garmin_hoy_parcial: (() => { const g = (D.garmin || []).find(x => x.date === today); return g ? g.kcal_total : null; })(),
+        },
         flags: {
           cardio_hoy: todaySes.some(s => s.type !== 'gym'),
           gym_hoy: todaySes.some(s => s.type === 'gym'),
@@ -903,67 +918,44 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   const EMPTY_DAY = { kcal: 0, protein: 0, items: [] };
   const getDay = ds => totalsByDate[ds] || EMPTY_DAY;
 
-const kcalTarget = (dynInfo && dynInfo.target) || D.target.kcal_target || 2800;
-const protTarget = D.target.protein_target || 160;
-
-const totals = getDay(sel);
-const streak = streakMemo;
-
-const kcalPct = Math.min(100, (totals.kcal / kcalTarget) * 100);
-const protPct = Math.min(100, (totals.protein / protTarget) * 100);
-
-const selGarmin = garminByDate[sel];
-
-const dayTargetFor = ds => {
-  const g = garminByDate[ds];
-  const k = g && g.kcal_total;
-  return (k && k > 1200)
-    ? Math.min(3200, Math.max(2300, Math.round((k - 600) / 10) * 10))
-    : kcalTarget;
-};
-
-const selTarget = dayTargetFor(sel);
-const kcalLeft = Math.max(0, selTarget - totals.kcal);
-
-const ranked = rankedMemo;
-const freeSet = freeSetMemo;
-const selIsFree = freeSet.has(sel);
-
-const protGap = Math.round(protTarget - totals.protein);
-
-const protCombo = (() => {
-  if (sel !== TODAY_STR() || selIsFree || protGap <= 25) return null;
-
-  const pick = [];
-  let sum = 0;
-
-  for (const t of ranked.filter(t => Number(t.protein) >= 12)) {
-    if (pick.length >= 3) break;
-
-    pick.push(t);
-    sum += Number(t.protein);
-
-    if (sum >= protGap) break;
-  }
-
-  return (pick.length && sum >= protGap * 0.6)
-    ? { pick, sum: Math.round(sum) }
-    : null;
-})();
-
-const sleepInfo =
-  (selGarmin && selGarmin.sleep_h != null)
-    ? { h: selGarmin.sleep_h, score: selGarmin.sleep_score, own: true }
-    : (lastSleep ? { ...lastSleep, own: false } : null);
-
-const R1 = 50,
-      R2 = 36,
-      C1 = 2 * Math.PI * R1,
-      C2 = 2 * Math.PI * R2;
-
-const calMonthStr = String(calMonth).padStart(2, '0');
+  const kcalTarget = (dynInfo && dynInfo.target) || D.target.kcal_target || 2800;
+  const protTarget = D.target.protein_target || 160;
+  const totals = getDay(sel);
+  const streak = streakMemo;
+  const kcalPct = Math.min(100,(totals.kcal/kcalTarget)*100);
+  const protPct = Math.min(100,(totals.protein/protTarget)*100);
+  const selGarmin = garminByDate[sel];
+  // objetivo de CADA día: si ese día tiene gasto Garmin, su objetivo real fue (gasto − 600); si no, el global
+  const dayTargetFor = ds => {
+    if (ds >= TODAY_STR()) return kcalTarget; // hoy/futuro: objetivo dinámico global (el gasto de hoy aún es parcial)
+    const g = garminByDate[ds]; const k = g && g.kcal_total;
+    return (k && k > 1200) ? Math.min(3200, Math.max(2300, Math.round((k - 600) / 10) * 10)) : kcalTarget;
+  };
+  const selTarget = dayTargetFor(sel);
+  const kcalLeft = Math.max(0,selTarget-totals.kcal);
+  const sleepInfo = (selGarmin && selGarmin.sleep_h!=null)
+    ? { h:selGarmin.sleep_h, score:selGarmin.sleep_score, own:true }
+    : (lastSleep ? { ...lastSleep, own:false } : null);
+  const R1=50,R2=36,C1=2*Math.PI*R1,C2=2*Math.PI*R2;
+  const calMonthStr = String(calMonth).padStart(2,'0');
 
   const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
+  const ranked = rankedMemo;
+  const freeSet = freeSetMemo;
+  const selIsFree = freeSet.has(sel);
+  // cerrador de proteina: combos de TU despensa que cierran el hueco de hoy
+  const protGap = Math.round(protTarget - totals.protein);
+  const protCombo = (() => {
+    if (sel !== TODAY_STR() || selIsFree || protGap <= 25) return null;
+    const pick = []; let sum = 0;
+    for (const t of ranked.filter(t => Number(t.protein) >= 12)) {
+      if (pick.length >= 3) break;
+      pick.push(t); sum += Number(t.protein);
+      if (sum >= protGap) break;
+    }
+    return (pick.length && sum >= protGap * 0.6) ? { pick, sum: Math.round(sum) } : null;
+  })();
+
 
   const parseFood = async () => {
     if(!foodText.trim())return; setAiBusy(true); setAiErr(null);
@@ -986,10 +978,7 @@ const calMonthStr = String(calMonth).padStart(2, '0');
   return (
     <div>
       {D.error && <div style={{fontSize:10,color:'var(--ac2,#ff4747)',marginBottom:12,padding:'8px 12px',border:'1px solid rgba(255,71,71,.25)'}}>⚠ Error guardando en Supabase: {D.error}</div>}
-      {/* anillo + racha */}
-      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
-        <span style={{display:'flex',alignItems:'center',gap:6,background:'rgba(239,159,39,0.08)',border:'1px solid rgba(239,159,39,0.35)',color:'#ef9f27',padding:'6px 14px',fontSize:11,letterSpacing:2,textTransform:'uppercase',fontFamily:"'DM Mono',monospace"}}>◆ {streak} {streak===1?'DÍA':'DÍAS'}</span>
-      </div>
+      {/* anillo */}
       <div style={{background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.3)',padding:16,marginBottom:20,display:'flex',alignItems:'center',gap:16}}>
         <div style={{position:'relative',width:108,height:108,flexShrink:0}}>
           <svg viewBox="0 0 120 120" width="108" height="108">
@@ -1000,7 +989,7 @@ const calMonthStr = String(calMonth).padStart(2, '0');
           </svg>
           <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
             <span style={{fontSize:20,fontFamily:"'Bebas Neue',sans-serif",lineHeight:1}}>{fmtN(totals.kcal)}</span>
-            <span style={{fontSize:10,opacity:.5}}>de {fmtN(kcalTarget)}</span>
+            <span style={{fontSize:10,opacity:.5}}>de {fmtN(selTarget)}</span>
           </div>
         </div>
         <div style={{flex:1,display:'flex',flexDirection:'column',gap:11}}>
@@ -1070,6 +1059,7 @@ const calMonthStr = String(calMonth).padStart(2, '0');
       </div>
 
       {dtab==='add' && (<>
+      <button onClick={()=>setNewOpen(true)} style={{width:'100%',padding:'11px',marginBottom:12,background:'rgba(29,158,117,0.06)',border:`1px solid ${TEAL}`,color:TEAL,cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,letterSpacing:1}}>＋ NUEVO ELEMENTO EN LA DESPENSA</button>
       {/* Selector de momento del día */}
       <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:12}}>
         {MEALS.map(m=>(
@@ -1095,9 +1085,6 @@ const calMonthStr = String(calMonth).padStart(2, '0');
         <button onClick={()=>setPantryOpen(true)} style={dMini}>▤ DESPENSA</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:8,marginBottom:10}}>
-        <button onClick={()=>setNewOpen(true)} style={{...dTpl,borderColor:TEAL,color:TEAL,display:'flex',alignItems:'center',justifyContent:'center'}}>
-          <div style={{display:'flex',alignItems:'center',gap:7}}><span style={{fontSize:18}}>＋</span><span style={{fontSize:13,fontWeight:500}}>Nuevo elemento</span></div>
-        </button>
         {ranked.map(t=>(
           <div key={t.id} style={{position:'relative',minWidth:0}}>
             <button onClick={()=>addTpl(t)} style={{...dTpl,width:'100%',borderColor:TIER_BORDER[t.tier]||'var(--bd2)'}}>
@@ -1264,6 +1251,7 @@ function parseGarminPaste(text) {
       sleep_score: scoreM ? Number(scoreM[1]) : null,
       body_battery: bbM ? Number(bbM[1]) : null,
       stress: toNum(get(/estr[eé]s\s*:\s*([\d.,]+)/i)),
+      intensity_min: toNum(get(/intensidad\s*:\s*([\d.,]+)/i)),
     });
   }
   return days;
@@ -1773,7 +1761,7 @@ function DExportModal({ sessions, onClose }) {
       lines.push(`## ${s.date}${s.muscles && s.muscles.length ? ' · ' + s.muscles.filter(m=>m!=='Cardio').join(', ') : ''}`);
       const exs = (s.exercises || []).filter(e => e.n).map(e => `${e.n} ${e.kg || 0}x${e.r || '?'}`);
       if (exs.length) lines.push(exs.join(' · '));
-      if (s.notes) lines.push(`Notas: ${String(s.notes).slice(0, 160)}`);
+      if (s.notes) lines.push(`Notas: ${String(s.notes).slice(0, 300)}`);
       lines.push('');
     });
     return lines.join('\n');
@@ -1880,9 +1868,12 @@ export default function App() {
 
         {panel==='dashboard' && <>
           <div style={{height:2,background:dashMode==='dieta'?'#1d9e75':'var(--ac)',margin:'-8px 0 14px',transition:'background .3s'}}/>
-          <div className="diary-tabs" style={{marginBottom:20}}>
+          <div className="diary-tabs" style={{marginBottom:20,display:'flex',alignItems:'center'}}>
             <div className={`diary-tab${dashMode==='entrenos'?' active':''}`} onClick={()=>setDashMode('entrenos')}>Entrenos</div>
-            <div className={`diary-tab${dashMode==='dieta'?' active dieta-tab':''}`} onClick={()=>setDashMode('dieta')} style={dashMode==='dieta'?{color:'#1d9e75',borderColor:'#1d9e75'}:{}}>Dieta</div>
+            <div className={`diary-tab${dashMode==='dieta'?' active':''}`} onClick={()=>setDashMode('dieta')} style={dashMode==='dieta'?{color:'#1d9e75',borderColor:'#1d9e75'}:{}}>Dieta</div>
+            {dashMode==='dieta' && (()=>{ const st = calcStreak(dietData?.entries||[], dietData?.freeDays||[]); return (
+              <span style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:5,color:'#ef9f27',fontSize:10,letterSpacing:1.5,fontFamily:"'DM Mono',monospace"}}>◆ {st} {st===1?'DÍA':'DÍAS'}</span>
+            ); })()}
           </div>
           <PulsoCard sessions={data.sessions} dietData={dietData}/>
           <Dashboard sessions={data.sessions} onDayClick={handleDayClick} mode={dashMode} dietData={dietData}/>

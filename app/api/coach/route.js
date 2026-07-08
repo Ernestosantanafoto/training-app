@@ -20,6 +20,13 @@ Devuelve SOLO texto plano en espanol: EXACTAMENTE 4 lineas, cada una de maximo 1
 ⚡ [entreno: que toca hoy segun lo que hizo esta semana y como durmio]
 ◆ [constancia: estado de racha y registro, con un empujon concreto y humano]
 
+El JSON incluye "flags" con patrones ya calculados. Usalos asi:
+- flags.cardio_hoy true y gym_hoy false -> en la linea de entreno, desaconseja añadir hierro hoy o recomienda hacerlo suave: sus datos demuestran que cardio+hierro el mismo dia le desploma los pesos.
+- flags.grupos_entrenados_48h -> NO recomiendes entrenar esos grupos hoy; sugiere un dia del protocolo con grupos descansados (prioridades: pecho, hombros, brazos, abdomen).
+- flags.fc_ultima >= flags.fc_media_30d + 4 -> señala fatiga/recuperacion pendiente en la linea de sueño.
+- flags.bb_ultimo bajo (<40) -> dia de gestionar energia, no de forzar.
+- flags.pct_kcal_indulgente_7d > 35 -> mencionalo con datos y sin drama en la linea de balance o constancia.
+
 Reglas: usa SOLO datos presentes en el JSON; si falta algo, di algo util sin inventar numeros. Redondea. Nada de saludos, markdown, comillas ni lineas extra. Especifico y humano, cero frases genericas de motivacion vacia.`;
 
 export async function POST(req) {

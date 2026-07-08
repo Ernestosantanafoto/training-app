@@ -207,7 +207,7 @@ export default function Entrenador({ onSessionComplete }) {
       r: e.sets[e.sets.length-1]?.realReps ?? e.sets[0]?.targetReps ?? 0,
     }));
 
-    const today = new Date().toISOString().slice(0,10);
+    const today = new Date().toLocaleDateString('en-CA'); // fecha LOCAL, no UTC
     setPendingSession({
       id: 'gf_' + Date.now(), date: today, type: 'gym',
       muscles, exercises: exercisesForSession,
@@ -235,7 +235,20 @@ export default function Entrenador({ onSessionComplete }) {
   const confirmAddToRegistry = async () => {
     if (!pendingSession) return;
     setDbStatus('saving');
-    await supabase.from('training_sessions').insert(pendingSession);
+    // Si ya hay sesion de gym HOY (p.ej. dos dias del protocolo seguidos),
+    // se FUSIONA con ella: union de musculos, suma de ejercicios, notas encadenadas.
+    const { data: existing } = await supabase.from('training_sessions')
+      .select('*').eq('date', pendingSession.date).eq('type', 'gym').limit(1);
+    if (existing && existing.length) {
+      const prev = existing[0];
+      await supabase.from('training_sessions').update({
+        muscles: [...new Set([...(prev.muscles || []), ...(pendingSession.muscles || [])])],
+        exercises: [...(prev.exercises || []), ...(pendingSession.exercises || [])],
+        notes: [prev.notes, pendingSession.notes].filter(Boolean).join(' + '),
+      }).eq('id', prev.id);
+    } else {
+      await supabase.from('training_sessions').insert(pendingSession);
+    }
     if (pendingDiary) {
       await supabase.from('training_diary').insert({
         id: 'gfd_' + Date.now(), date: pendingSession.date, type: 'gym', text: pendingDiary,

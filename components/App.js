@@ -297,6 +297,17 @@ function VidaStats({ dietData }) {
   const last7 = series.slice(-7);
   const avg = k => { const v = last7.map(r=>r[k]).filter(n=>n!=null); return v.length ? v.reduce((s,n)=>s+n,0)/v.length : null; };
   const aPasos = avg('pasos'), aSueno = avg('sueno'), aFc = avg('fc'), aGasto = avg('gasto');
+  const tierSplit = useMemo(() => {
+    const map = {}; ((D && D.templates) || []).forEach(t => { if (t.name) map[t.name] = t.tier || 'verde'; });
+    const wk = new Date(); wk.setDate(wk.getDate() - 7); const ws = wk.toLocaleDateString('en-CA');
+    let v = 0, g = 0, p = 0, tot = 0;
+    ((D && D.entries) || []).forEach(e => {
+      if (e.date < ws) return; const tr = map[e.name]; if (!tr) return;
+      tot += e.kcal || 0;
+      if (tr === 'verde') v += e.kcal || 0; else if (tr === 'goloso') g += e.kcal || 0; else p += e.kcal || 0;
+    });
+    return tot > 0 ? { v: Math.round(v/tot*100), g: Math.round(g/tot*100), p: Math.round(p/tot*100) } : null;
+  }, [D && D.entries, D && D.templates]);
   const fmtH = h => h==null ? '—' : `${Math.floor(h)}h${String(Math.round((h%1)*60)).padStart(2,'0')}`;
 
   if (!series.length) return <div className="empty">Aún sin datos de vida. Añádelos desde ⚡ → DATOS GARMIN.</div>;
@@ -310,6 +321,22 @@ function VidaStats({ dietData }) {
         <StatBox v={aFc!=null?Math.round(aFc):'—'} l="FC reposo" c="#e07060"/>
         <StatBox v={aGasto!=null?Math.round(aGasto).toLocaleString('es-ES'):'—'} l="Gasto kcal" c="var(--ac)"/>
       </div>
+
+      {tierSplit && (
+        <div style={{marginBottom:20}}>
+          <div className="sl">Calidad de la ingesta · 7 días</div>
+          <div style={{display:'flex',height:14,overflow:'hidden',border:'1px solid var(--bd)'}}>
+            {tierSplit.v>0 && <div style={{width:`${tierSplit.v}%`,background:'#1d9e75'}}/>}
+            {tierSplit.g>0 && <div style={{width:`${tierSplit.g}%`,background:'#ef9f27'}}/>}
+            {tierSplit.p>0 && <div style={{width:`${tierSplit.p}%`,background:'#e24b4a'}}/>}
+          </div>
+          <div style={{display:'flex',gap:14,marginTop:6,fontSize:9,fontFamily:"'DM Mono',monospace",letterSpacing:.5}}>
+            <span style={{color:'#1d9e75'}}>● sano {tierSplit.v}%</span>
+            <span style={{color:'#ef9f27'}}>● goloso {tierSplit.g}%</span>
+            <span style={{color:'#e24b4a'}}>● pecado {tierSplit.p}%</span>
+          </div>
+        </div>
+      )}
 
       <VChart title="Gasto vs ingesta · kcal" data={series} legend
         lines={[{k:'gasto',c:'#e07060',n:'Gasto (Garmin)'},{k:'ingesta',c:'#1d9e75',n:'Ingesta (dieta)'}]}/>
@@ -605,6 +632,28 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions, bios }) {
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [fullOpen, setFullOpen] = useState(false);
+  const [protoDays, setProtoDays] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await supabase.from('protocols').select('protocol_data').order('created_at', { ascending: false }).limit(1);
+        if (alive && data && data.length && data[0].protocol_data && data[0].protocol_data.days) {
+          setProtoDays(data[0].protocol_data.days.map(d => ({ id: d.id, name: d.name, color: d.color || '#e8ff47' })));
+        }
+      } catch (e) {}
+    })();
+    return () => { alive = false; };
+  }, []);
+  const GROUP_MUSCLES = { 'PECHO': ['Pecho'], 'HOMBROS': ['Hombros'], 'BRAZOS': ['Bíceps', 'Tríceps'], 'ABDOMEN': ['Core', 'Abdomen'], 'ESPALDA+PIERNA': ['Espalda', 'Piernas'] };
+  const lastTrainedGroup = (name) => {
+    const keys = GROUP_MUSCLES[(name || '').toUpperCase()] || [name];
+    let last = null;
+    (sessions || []).forEach(s => {
+      if (s && s.type === 'gym' && (s.muscles || []).some(m => keys.includes(m))) { if (!last || s.date > last) last = s.date; }
+    });
+    return last;
+  };
 
   if (view === 'gymfire') return (
     <div>
@@ -633,6 +682,20 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions, bios }) {
           <div style={{fontSize:9,color:'var(--mu)',letterSpacing:2,marginTop:3}}>GYMFIRE · SESIÓN GUIADA CON TIMER Y LOG</div>
         </div>
       </button>
+      {protoDays && (
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,margin:'-16px 0 24px'}}>
+          {protoDays.map(d => {
+            const last = lastTrainedGroup(d.name);
+            const days = last ? Math.round((new Date(TODAY_STR() + 'T00:00:00') - new Date(last + 'T00:00:00')) / 86400000) : null;
+            const warn = days !== null && days < 2;
+            return (
+              <div key={d.id} style={{fontSize:9,letterSpacing:1,fontFamily:"'DM Mono',monospace",padding:'5px 9px',border:`1px solid ${warn ? 'rgba(239,159,39,0.55)' : d.color + '55'}`,color: warn ? '#ef9f27' : d.color}}>
+                {d.name} {days === null ? '· ✓' : warn ? (days === 0 ? '· ⚠ hoy' : '· ⚠ ayer') : `· ✓ ${days}d`}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── ENTRADA DE DATOS ── */}
       <div className="sl">Registrar</div>
@@ -701,14 +764,33 @@ function PulsoCard({ sessions, dietData }) {
       const ws = wk.toLocaleDateString('en-CA');
       const byDate = {};
       (D.entries || []).forEach(e => { const t = byDate[e.date] || (byDate[e.date] = { k: 0, p: 0 }); t.k += e.kcal || 0; t.p += Number(e.protein) || 0; });
+      // flags deterministas para que el coach razone con patrones, no solo numeros
+      const yd = new Date(); yd.setDate(yd.getDate() - 1); const ys = yd.toLocaleDateString('en-CA');
+      const todaySes = (sessions || []).filter(s => s && s.date === today);
+      const grupos48h = [...new Set((sessions || []).filter(s => s && (s.date === today || s.date === ys) && s.type === 'gym').flatMap(s => s.muscles || []))];
+      const fcVals = (D.garmin || []).filter(g => g.resting_hr).slice(0, 30).map(g => g.resting_hr);
+      const fcAvg = fcVals.length ? Math.round(fcVals.reduce((a, b) => a + b, 0) / fcVals.length) : null;
+      const bbLast = (D.garmin || []).find(g => g.body_battery != null);
+      const tplTier = {}; (D.templates || []).forEach(t => { if (t.name) tplTier[t.name] = t.tier || 'verde'; });
+      let kInd = 0, kTot = 0;
+      (D.entries || []).forEach(e => { if (e.date < ws) return; const tr = tplTier[e.name]; if (!tr) return; kTot += e.kcal || 0; if (tr !== 'verde') kInd += e.kcal || 0; });
       const snapshot = {
         hoy: today,
         objetivo: { kcal: (D.target && D.target.kcal_target) || 2800, proteina_g: (D.target && D.target.protein_target) || 160 },
         racha_dieta: calcStreak(D.entries || [], D.freeDays || []),
-        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: g.date, gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps })),
+        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: g.date, gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps, bb: g.body_battery })),
         dieta_7d: Object.entries(byDate).filter(([d]) => d >= ws).sort().map(([d, v]) => ({ d, kcal: Math.round(v.k), prot: Math.round(v.p) })),
         entrenos_7d: (sessions || []).filter(s => s && s.date >= ws).map(s => ({ d: s.date, tipo: s.type, musculos: (s.muscles || []).slice(0, 4) })),
         dias_libres: (D.freeDays || []).map(f => f.date).filter(d => d >= ws),
+        flags: {
+          cardio_hoy: todaySes.some(s => s.type !== 'gym'),
+          gym_hoy: todaySes.some(s => s.type === 'gym'),
+          grupos_entrenados_48h: grupos48h,
+          fc_media_30d: fcAvg,
+          fc_ultima: fcVals[0] || null,
+          bb_ultimo: bbLast ? { d: bbLast.date, v: bbLast.body_battery } : null,
+          pct_kcal_indulgente_7d: kTot ? Math.round((kInd / kTot) * 100) : null,
+        },
       };
       const r = await fetch('/api/coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot }) });
       const data = await r.json();
@@ -832,6 +914,18 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   const dayTargetFor = ds => { const g = garminByDate[ds]; const k = g && g.kcal_total; return (k && k > 1200) ? Math.min(3200, Math.max(2300, Math.round((k - 600) / 10) * 10)) : kcalTarget; };
   const selTarget = dayTargetFor(sel);
   const kcalLeft = Math.max(0,selTarget-totals.kcal);
+  // cerrador de proteina: combos de TU despensa que cierran el hueco de hoy
+  const protGap = Math.round(protTarget - totals.protein);
+  const protCombo = (() => {
+    if (sel !== TODAY_STR() || selIsFree || protGap <= 25) return null;
+    const pick = []; let sum = 0;
+    for (const t of ranked.filter(t => Number(t.protein) >= 12)) {
+      if (pick.length >= 3) break;
+      pick.push(t); sum += Number(t.protein);
+      if (sum >= protGap) break;
+    }
+    return (pick.length && sum >= protGap * 0.6) ? { pick, sum: Math.round(sum) } : null;
+  })();
   const sleepInfo = (selGarmin && selGarmin.sleep_h!=null)
     ? { h:selGarmin.sleep_h, score:selGarmin.sleep_score, own:true }
     : (lastSleep ? { ...lastSleep, own:false } : null);
@@ -889,6 +983,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
             {sleepInfo && <span style={{fontSize:9,color:sleepInfo.h<7?'#ef9f27':'var(--mu3)',letterSpacing:.3}}>◐ sueño{sleepInfo.own?'':` (últ. ${fmtShort(sleepInfo.date)})`} {Math.floor(sleepInfo.h)}h{String(Math.round((sleepInfo.h%1)*60)).padStart(2,'0')}{sleepInfo.score?` · punt. ${sleepInfo.score}`:''}{sleepInfo.h<7?' · corto':''}</span>}
             {selGarmin && selGarmin.kcal_total>0 && <span style={{fontSize:9,color:'var(--mu3)',letterSpacing:.3}}>⌁ gasto {sel===TODAY_STR()?'hoy':'ese día'}: {fmtN(selGarmin.kcal_total)} · balance {totals.kcal-selGarmin.kcal_total>0?'+':''}{fmtN(totals.kcal-selGarmin.kcal_total)}</span>}
             {selTarget!==kcalTarget && <span style={{fontSize:9,color:TEAL,letterSpacing:.3}}>◎ objetivo de ese día: {fmtN(selTarget)} · ajustado a su gasto real</span>}
+            {protCombo && <span style={{fontSize:9,color:'#25c290',letterSpacing:.3}}>◇ cierra tus {protGap} g con: {protCombo.pick.map(t=>`${t.name} (${Math.round(t.protein)})`).join(' + ')} ≈ {protCombo.sum} g</span>}
           </div>
           {sel!==TODAY_STR() && <button onClick={()=>setSel(TODAY_STR())} style={dMini}>← volver a hoy</button>}
         </div>

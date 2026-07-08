@@ -964,9 +964,6 @@ const R1 = 50,
 const calMonthStr = String(calMonth).padStart(2, '0');
 
   const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
-  const ranked = rankedMemo;
-  const freeSet = freeSetMemo;
-  const selIsFree = freeSet.has(sel);
 
   const parseFood = async () => {
     if(!foodText.trim())return; setAiBusy(true); setAiErr(null);

@@ -903,34 +903,65 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   const EMPTY_DAY = { kcal: 0, protein: 0, items: [] };
   const getDay = ds => totalsByDate[ds] || EMPTY_DAY;
 
-  const kcalTarget = (dynInfo && dynInfo.target) || D.target.kcal_target || 2800;
-  const protTarget = D.target.protein_target || 160;
-  const totals = getDay(sel);
-  const streak = streakMemo;
-  const kcalPct = Math.min(100,(totals.kcal/kcalTarget)*100);
-  const protPct = Math.min(100,(totals.protein/protTarget)*100);
-  const selGarmin = garminByDate[sel];
-  // objetivo de CADA día: si ese día tiene gasto Garmin, su objetivo real fue (gasto − 600); si no, el global
-  const dayTargetFor = ds => { const g = garminByDate[ds]; const k = g && g.kcal_total; return (k && k > 1200) ? Math.min(3200, Math.max(2300, Math.round((k - 600) / 10) * 10)) : kcalTarget; };
-  const selTarget = dayTargetFor(sel);
-  const kcalLeft = Math.max(0,selTarget-totals.kcal);
-  // cerrador de proteina: combos de TU despensa que cierran el hueco de hoy
-  const protGap = Math.round(protTarget - totals.protein);
-  const protCombo = (() => {
-    if (sel !== TODAY_STR() || selIsFree || protGap <= 25) return null;
-    const pick = []; let sum = 0;
-    for (const t of ranked.filter(t => Number(t.protein) >= 12)) {
-      if (pick.length >= 3) break;
-      pick.push(t); sum += Number(t.protein);
-      if (sum >= protGap) break;
-    }
-    return (pick.length && sum >= protGap * 0.6) ? { pick, sum: Math.round(sum) } : null;
-  })();
-  const sleepInfo = (selGarmin && selGarmin.sleep_h!=null)
-    ? { h:selGarmin.sleep_h, score:selGarmin.sleep_score, own:true }
-    : (lastSleep ? { ...lastSleep, own:false } : null);
-  const R1=50,R2=36,C1=2*Math.PI*R1,C2=2*Math.PI*R2;
-  const calMonthStr = String(calMonth).padStart(2,'0');
+const kcalTarget = (dynInfo && dynInfo.target) || D.target.kcal_target || 2800;
+const protTarget = D.target.protein_target || 160;
+
+const totals = getDay(sel);
+const streak = streakMemo;
+
+const kcalPct = Math.min(100, (totals.kcal / kcalTarget) * 100);
+const protPct = Math.min(100, (totals.protein / protTarget) * 100);
+
+const selGarmin = garminByDate[sel];
+
+const dayTargetFor = ds => {
+  const g = garminByDate[ds];
+  const k = g && g.kcal_total;
+  return (k && k > 1200)
+    ? Math.min(3200, Math.max(2300, Math.round((k - 600) / 10) * 10))
+    : kcalTarget;
+};
+
+const selTarget = dayTargetFor(sel);
+const kcalLeft = Math.max(0, selTarget - totals.kcal);
+
+const ranked = rankedMemo;
+const freeSet = freeSetMemo;
+const selIsFree = freeSet.has(sel);
+
+const protGap = Math.round(protTarget - totals.protein);
+
+const protCombo = (() => {
+  if (sel !== TODAY_STR() || selIsFree || protGap <= 25) return null;
+
+  const pick = [];
+  let sum = 0;
+
+  for (const t of ranked.filter(t => Number(t.protein) >= 12)) {
+    if (pick.length >= 3) break;
+
+    pick.push(t);
+    sum += Number(t.protein);
+
+    if (sum >= protGap) break;
+  }
+
+  return (pick.length && sum >= protGap * 0.6)
+    ? { pick, sum: Math.round(sum) }
+    : null;
+})();
+
+const sleepInfo =
+  (selGarmin && selGarmin.sleep_h != null)
+    ? { h: selGarmin.sleep_h, score: selGarmin.sleep_score, own: true }
+    : (lastSleep ? { ...lastSleep, own: false } : null);
+
+const R1 = 50,
+      R2 = 36,
+      C1 = 2 * Math.PI * R1,
+      C2 = 2 * Math.PI * R2;
+
+const calMonthStr = String(calMonth).padStart(2, '0');
 
   const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
   const ranked = rankedMemo;

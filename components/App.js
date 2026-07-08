@@ -91,7 +91,7 @@ function Dashboard({ sessions, onDayClick, mode, dietData }) {
   if (mode === 'dieta') {
     return <DietaDashboard calYear={calYear} calMonth={calMonth} calDays={calDays}
       calTitle={calTitle} goMonth={goMonth}
-      D={dietData} />;
+      D={dietData} sessions={sessions} />;
   }
 
   // ====== MODO ENTRENOS ======
@@ -860,7 +860,7 @@ const TODAY_STR = () => new Date().toLocaleDateString('en-CA'); // fecha LOCAL, 
 const MEALS = ['desayuno','brunch','almuerzo','merienda','cena','otros'];
 const MEAL_LBL = {desayuno:'Desayuno',brunch:'Brunch',almuerzo:'Almuerzo',merienda:'Merienda',cena:'Cena',otros:'Otros'};
 
-function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
+function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sessions }) {
   const [sel, setSel] = useState(TODAY_STR());
   const [textOpen, setTextOpen] = useState(false);
   const [foodText, setFoodText] = useState('');
@@ -978,6 +978,11 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
   return (
     <div>
       {D.error && <div style={{fontSize:10,color:'var(--ac2,#ff4747)',marginBottom:12,padding:'8px 12px',border:'1px solid rgba(255,71,71,.25)'}}>⚠ Error guardando en Supabase: {D.error}</div>}
+
+      <button onClick={()=>setNewOpen(true)} style={{width:'100%',padding:'12px',marginBottom:14,background:'rgba(29,158,117,0.06)',border:`1px solid ${TEAL}`,color:TEAL,cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,letterSpacing:1}}>＋ NUEVO ELEMENTO EN LA DESPENSA</button>
+
+      <PulsoCard sessions={sessions} dietData={D}/>
+
       {/* anillo */}
       <div style={{background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.3)',padding:16,marginBottom:20,display:'flex',alignItems:'center',gap:16}}>
         <div style={{position:'relative',width:108,height:108,flexShrink:0}}>
@@ -1059,7 +1064,6 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D }) {
       </div>
 
       {dtab==='add' && (<>
-      <button onClick={()=>setNewOpen(true)} style={{width:'100%',padding:'11px',marginBottom:12,background:'rgba(29,158,117,0.06)',border:`1px solid ${TEAL}`,color:TEAL,cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,letterSpacing:1}}>＋ NUEVO ELEMENTO EN LA DESPENSA</button>
       {/* Selector de momento del día */}
       <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:12}}>
         {MEALS.map(m=>(
@@ -1875,7 +1879,7 @@ export default function App() {
               <span style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:5,color:'#ef9f27',fontSize:10,letterSpacing:1.5,fontFamily:"'DM Mono',monospace"}}>◆ {st} {st===1?'DÍA':'DÍAS'}</span>
             ); })()}
           </div>
-          <PulsoCard sessions={data.sessions} dietData={dietData}/>
+          {dashMode==='entrenos' && <PulsoCard sessions={data.sessions} dietData={dietData}/>}
           <Dashboard sessions={data.sessions} onDayClick={handleDayClick} mode={dashMode} dietData={dietData}/>
         </>}
         {panel==='prs'       && <PRs sessions={data.sessions} dietData={dietData}/>}

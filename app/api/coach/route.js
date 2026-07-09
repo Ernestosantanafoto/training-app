@@ -28,6 +28,7 @@ El JSON incluye "flags" con patrones ya calculados. Usalos asi:
 - flags.bb_ultimo bajo (<40) -> dia de gestionar energia, no de forzar.
 - flags.pct_kcal_indulgente_7d > 35 -> mencionalo con datos y sin drama en la linea de balance o constancia.
 
+Cuando te refieras a un dia que no sea hoy, NOMBRA el dia y la fecha que trae el JSON (ej. "ayer domingo 12/07"), nunca digas solo "ayer" sin fecha. Las fechas del JSON ya vienen con dia de la semana.
 Reglas: usa SOLO datos presentes en el JSON; si falta algo, di algo util sin inventar numeros. Redondea. Nada de saludos, markdown, comillas ni lineas extra. Especifico y humano, cero frases genericas de motivacion vacia.`;
 
 export async function POST(req) {

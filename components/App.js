@@ -851,7 +851,7 @@ function PulsoCard({ sessions, dietData, expanded }) {
   );
 }
 
-const SORT_LBL = { freq:'frecuencia', dens:'proteína/kcal', new:'recientes', old:'antiguos' };
+const SORT_LBL = { prot:'proteínas', kcal:'calorías', dens:'ratio', time:'tiempo', freq:'frecuencia' };
 // ── DietaDashboard (modo dieta, acento teal) ──────────────────
 const TEAL = '#1d9e75';
 const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
@@ -859,7 +859,7 @@ const TIER_BORDER = { verde:'rgba(29,158,117,0.45)', goloso:'rgba(239,159,39,0.4
 const ST_COLOR = { verde:'#1d9e75', ambar:'#ef9f27', rojo:'#e24b4a', none:'rgba(255,255,255,0.12)' };
 const fmtN = n => Math.round(n).toLocaleString('es-ES');
 const TODAY_STR = () => new Date().toLocaleDateString('en-CA'); // fecha LOCAL, no UTC
-const MEALS = ['desayuno','brunch','almuerzo','merienda','cena','otros'];
+const MEALS = ['desayuno','brunch','almuerzo','merienda','cena'];
 const MEAL_LBL = {desayuno:'Desayuno',brunch:'Brunch',almuerzo:'Almuerzo',merienda:'Merienda',cena:'Cena',otros:'Otros'};
 
 function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sessions }) {
@@ -875,8 +875,10 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
   const [dayPopup, setDayPopup] = useState(null);
   const [aiErr, setAiErr] = useState(null);
   const [dtab, setDtab] = useState(() => loadUI('dietTab','add'));
-  const [sortBy, setSortBy] = useState(() => loadUI('pantrySort','freq'));
+  const [sortBy, setSortBy] = useState(() => { const v = loadUI('pantrySort','freq'); return ['prot','kcal','dens','time','freq'].includes(v) ? v : 'freq'; });
+  const [sortDir, setSortDir] = useState(() => loadUI('pantryDir','desc'));
   const [sortOpen, setSortOpen] = useState(false);
+  useEffect(() => { saveUI('pantryDir', sortDir); }, [sortDir]);
   useEffect(() => { saveUI('pantrySort', sortBy); }, [sortBy]);
   useEffect(() => { saveUI('meal', meal); }, [meal]);
   useEffect(() => { saveUI('dietTab', dtab); }, [dtab]);
@@ -947,13 +949,23 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
   const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
   const ranked = useMemo(() => {
     const dens = t => (Number(t.protein) > 0 && Number(t.kcal) > 0) ? Number(t.protein) / Number(t.kcal) : 0;
+    const timeKey = t => t.created_at ? new Date(t.created_at).getTime() : (Number(String(t.id).slice(-6)) || 0);
     const arr = [...rankedMemo];
-    if (sortBy === 'freq') return arr; // rankedMemo ya viene por frecuencia
-    if (sortBy === 'dens') return arr.sort((a, b) => dens(b) - dens(a));
-    if (sortBy === 'new') return arr.sort((a, b) => (b.id || 0) > (a.id || 0) ? 1 : -1); // añadido reciente primero
-    if (sortBy === 'old') return arr.sort((a, b) => (a.id || 0) > (b.id || 0) ? 1 : -1); // añadido antiguo primero
-    return arr;
-  }, [rankedMemo, sortBy]);
+    if (sortBy === 'freq') return arr; // rankedMemo ya viene por frecuencia de uso (desc por naturaleza)
+    const val = {
+      prot: t => Number(t.protein) || 0,
+      kcal: t => Number(t.kcal) || 0,
+      dens: t => dens(t),
+      time: t => timeKey(t),
+    }[sortBy];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    // orden estable por (valor, luego nombre) para que empates queden consistentes
+    return arr.sort((a, b) => {
+      const d = (val(a) - val(b)) * dir;
+      if (d !== 0) return d;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }, [rankedMemo, sortBy, sortDir]);
   const freeSet = freeSetMemo;
   const selIsFree = freeSet.has(sel);
   // cerrador de proteina: combos de TU despensa que cierran el hueco de hoy
@@ -1078,28 +1090,26 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
       </div>
       <p style={{fontSize:9,color:'var(--mu)',letterSpacing:.5,margin:'-14px 0 16px',textAlign:'right'}}>toca un día para seleccionarlo · tócalo otra vez para ver su detalle</p>
 
-      {/* Añadir | Hoy */}
-      <div className="diary-tabs" style={{marginBottom:14}}>
+      {/* Añadir | Hoy · Despensa */}
+      <div className="diary-tabs" style={{marginBottom:14,display:'flex',alignItems:'center'}}>
         <div className={`diary-tab${dtab==='add'?' active':''}`} onClick={()=>setDtab('add')} style={dtab==='add'?{color:TEAL,borderColor:TEAL}:{}}>Añadir</div>
         <div className={`diary-tab${dtab==='hoy'?' active':''}`} onClick={()=>setDtab('hoy')} style={dtab==='hoy'?{color:TEAL,borderColor:TEAL}:{}}>{sel===TODAY_STR()?'Hoy':fmtShort(sel)}{totals.items.length?` · ${totals.items.length}`:''}</div>
+        <button onClick={()=>setPantryOpen(true)} style={{marginLeft:'auto',height:32,display:'flex',alignItems:'center',gap:6,padding:'0 12px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--mu3)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:1}}>▤ DESPENSA</button>
       </div>
 
       {dtab==='add' && (<>
-      {/* FILA 1 · momento (scroll horizontal) + despensa fija */}
-      <div style={{display:'flex',alignItems:'stretch',gap:8,marginBottom:8}}>
-        <div style={{display:'flex',gap:5,overflowX:'auto',flex:1,minWidth:0,paddingBottom:2,WebkitOverflowScrolling:'touch'}}>
-          {MEALS.map(m=>(
-            <button key={m} onClick={()=>setMeal(m)}
-              style={{fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5,padding:'0 12px',height:34,flexShrink:0,cursor:'pointer',whiteSpace:'nowrap',
-                background:meal===m?'rgba(29,158,117,0.15)':'var(--sf)',
-                border:meal===m?`1px solid ${TEAL}`:'1px solid var(--bd2)',
-                color:meal===m?TEAL:'var(--mu3)'}}>{MEAL_LBL[m]}</button>
-          ))}
-        </div>
-        <button onClick={()=>setPantryOpen(true)} style={{height:34,flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'0 14px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--mu3)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:1}}>▤ DESPENSA</button>
+      {/* FILA 1 · los 5 momentos, reparten ancho por igual */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:5,marginBottom:8}}>
+        {MEALS.map(m=>(
+          <button key={m} onClick={()=>setMeal(m)}
+            style={{fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:.3,padding:'0 4px',height:34,cursor:'pointer',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',
+              background:meal===m?'rgba(29,158,117,0.15)':'var(--sf)',
+              border:meal===m?`1px solid ${TEAL}`:'1px solid var(--bd2)',
+              color:meal===m?TEAL:'var(--mu3)'}}>{MEAL_LBL[m]}</button>
+        ))}
       </div>
 
-      {/* FILA 2 · cantidad (izq) + ordenar desplegable (der), misma altura */}
+      {/* FILA 2 · cantidad (izq) + campo de orden + sentido asc/desc (der) */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:10}}>
         <div style={{display:'flex',alignItems:'center',height:34,border:'1px solid var(--bd2)',background:'var(--sf)'}}>
           <span style={{fontSize:9,color:'var(--mu)',letterSpacing:1,padding:'0 10px'}}>CANT</span>
@@ -1107,17 +1117,21 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
           <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,minWidth:28,textAlign:'center',color:qty>1?TEAL:'var(--tx)'}}>{qty}</span>
           <button onClick={()=>setQty(q=>q+1)} style={{width:32,height:34,background:'none',border:'none',borderRight:'1px solid var(--bd2)',color:'inherit',fontSize:16,cursor:'pointer'}}>+</button>
         </div>
-        <div style={{position:'relative'}}>
-          <button onClick={()=>setSortOpen(o=>!o)} style={{height:34,display:'flex',alignItems:'center',gap:7,padding:'0 12px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--mu3)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5}}>
-            <span style={{color:'var(--mu)'}}>orden:</span><span style={{color:TEAL}}>{SORT_LBL[sortBy]}</span><span style={{fontSize:8}}>▼</span>
-          </button>
-          {sortOpen && (
-            <div style={{position:'absolute',top:36,right:0,zIndex:20,background:'var(--bg,#0e0e0d)',border:'1px solid var(--bd2)',minWidth:150,boxShadow:'0 6px 20px rgba(0,0,0,0.5)'}}>
-              {[['freq','frecuencia'],['dens','proteína / kcal'],['new','recientes'],['old','antiguos']].map(([k,lbl])=>(
-                <button key={k} onClick={()=>{setSortBy(k);setSortOpen(false);}} style={{display:'block',width:'100%',textAlign:'left',padding:'9px 12px',background:sortBy===k?'rgba(29,158,117,0.12)':'transparent',border:'none',borderBottom:'1px solid var(--bd)',color:sortBy===k?TEAL:'var(--tx)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:11}}>{lbl}</button>
-              ))}
-            </div>
-          )}
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <div style={{position:'relative'}}>
+            <button onClick={()=>setSortOpen(o=>!o)} style={{height:34,display:'flex',alignItems:'center',gap:7,padding:'0 12px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--mu3)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5}}>
+              <span style={{color:'var(--mu)'}}>por</span><span style={{color:TEAL}}>{SORT_LBL[sortBy]}</span><span style={{fontSize:8}}>▼</span>
+            </button>
+            {sortOpen && (
+              <div style={{position:'absolute',top:36,right:0,zIndex:20,background:'var(--bg,#0e0e0d)',border:'1px solid var(--bd2)',minWidth:150,boxShadow:'0 6px 20px rgba(0,0,0,0.5)'}}>
+                {[['prot','proteínas'],['kcal','calorías'],['dens','ratio prot/kcal'],['time','tiempo (añadido)'],['freq','frecuencia']].map(([k,lbl])=>(
+                  <button key={k} onClick={()=>{setSortBy(k);setSortOpen(false);}} style={{display:'block',width:'100%',textAlign:'left',padding:'9px 12px',background:sortBy===k?'rgba(29,158,117,0.12)':'transparent',border:'none',borderBottom:'1px solid var(--bd)',color:sortBy===k?TEAL:'var(--tx)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:11}}>{lbl}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={()=>setSortDir(d=>d==='desc'?'asc':'desc')} title={sortDir==='desc'?'descendente':'ascendente'}
+            style={{width:34,height:34,background:'var(--sf)',border:'1px solid var(--bd2)',color:TEAL,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center'}}>{sortDir==='desc'?'▼':'▲'}</button>
         </div>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:8,marginBottom:10}}>

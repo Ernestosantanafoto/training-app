@@ -874,6 +874,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
   const [dayPopup, setDayPopup] = useState(null);
   const [aiErr, setAiErr] = useState(null);
   const [dtab, setDtab] = useState(() => loadUI('dietTab','add'));
+  const [sortBy, setSortBy] = useState(() => loadUI('pantrySort','freq'));
+  useEffect(() => { saveUI('pantrySort', sortBy); }, [sortBy]);
   useEffect(() => { saveUI('meal', meal); }, [meal]);
   useEffect(() => { saveUI('dietTab', dtab); }, [dtab]);
 
@@ -941,7 +943,15 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
   const calMonthStr = String(calMonth).padStart(2,'0');
 
   const addTpl = t => { D.addEntry({date:sel,meal,name:t.name,kcal:t.kcal,protein:t.protein,source:'plantilla',estimated:t.estimated,qty}); setQty(1); };
-  const ranked = rankedMemo;
+  const ranked = useMemo(() => {
+    const dens = t => (Number(t.protein) > 0 && Number(t.kcal) > 0) ? Number(t.protein) / Number(t.kcal) : 0;
+    const arr = [...rankedMemo];
+    if (sortBy === 'freq') return arr; // rankedMemo ya viene por frecuencia
+    if (sortBy === 'dens') return arr.sort((a, b) => dens(b) - dens(a));
+    if (sortBy === 'new') return arr.sort((a, b) => (b.id || 0) > (a.id || 0) ? 1 : -1); // añadido reciente primero
+    if (sortBy === 'old') return arr.sort((a, b) => (a.id || 0) > (b.id || 0) ? 1 : -1); // añadido antiguo primero
+    return arr;
+  }, [rankedMemo, sortBy]);
   const freeSet = freeSetMemo;
   const selIsFree = freeSet.has(sel);
   // cerrador de proteina: combos de TU despensa que cierran el hueco de hoy
@@ -1093,8 +1103,14 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
         {qty>1 && <span style={{fontSize:10,color:TEAL}}>se anadiran {qty} de una</span>}
       </div>
 
-      {/* Lista de platos ordenada por frecuencia de uso */}
-      <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginBottom:6}}>
+      {/* Ordenar (izquierda) + Despensa (derecha) */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:6,marginBottom:6}}>
+        <div style={{display:'flex',alignItems:'center',gap:5,minWidth:0,flexWrap:'wrap'}}>
+          <span style={{fontSize:9,color:'var(--mu)',letterSpacing:1}}>ORDEN</span>
+          {[['freq','frecuencia'],['dens','proteína/kcal'],['new','recientes'],['old','antiguos']].map(([k,lbl])=>(
+            <button key={k} onClick={()=>setSortBy(k)} style={{fontSize:9,letterSpacing:.5,padding:'4px 7px',cursor:'pointer',fontFamily:"'DM Mono',monospace",background:sortBy===k?'rgba(29,158,117,0.12)':'transparent',border:sortBy===k?`1px solid ${TEAL}`:'1px solid var(--bd2)',color:sortBy===k?TEAL:'var(--mu3)'}}>{lbl}</button>
+          ))}
+        </div>
         <button onClick={()=>setPantryOpen(true)} style={dMini}>▤ DESPENSA</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:8,marginBottom:10}}>
@@ -1104,7 +1120,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
               <div style={{display:'flex',alignItems:'center',marginBottom:3,minWidth:0}}>
                 <span style={{fontSize:13,fontWeight:500,flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.name}{t.estimated?' ~':''}</span>
               </div>
-              <span style={{fontSize:11,opacity:.55,display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.kcal} kcal · {t.protein} g</span>
+              <span style={{fontSize:11,opacity:.55,display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.kcal} kcal · {t.protein} g{(Number(t.protein)>0&&Number(t.kcal)>0)?` · ${(Number(t.protein)/Number(t.kcal)*100).toFixed(1)} p/100kcal`:''}</span>
             </button>
           </div>
         ))}

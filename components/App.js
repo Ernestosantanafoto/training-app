@@ -851,6 +851,7 @@ function PulsoCard({ sessions, dietData, expanded }) {
   );
 }
 
+const SORT_LBL = { freq:'frecuencia', dens:'proteína/kcal', new:'recientes', old:'antiguos' };
 // ── DietaDashboard (modo dieta, acento teal) ──────────────────
 const TEAL = '#1d9e75';
 const TIER_COLOR = { verde:'#1d9e75', goloso:'#ef9f27', pecado:'#e24b4a' };
@@ -875,6 +876,7 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
   const [aiErr, setAiErr] = useState(null);
   const [dtab, setDtab] = useState(() => loadUI('dietTab','add'));
   const [sortBy, setSortBy] = useState(() => loadUI('pantrySort','freq'));
+  const [sortOpen, setSortOpen] = useState(false);
   useEffect(() => { saveUI('pantrySort', sortBy); }, [sortBy]);
   useEffect(() => { saveUI('meal', meal); }, [meal]);
   useEffect(() => { saveUI('dietTab', dtab); }, [dtab]);
@@ -1083,35 +1085,40 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
       </div>
 
       {dtab==='add' && (<>
-      {/* Selector de momento del día */}
-      <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:12}}>
-        {MEALS.map(m=>(
-          <button key={m} onClick={()=>setMeal(m)}
-            style={{fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5,padding:'6px 12px',cursor:'pointer',
-              background:meal===m?'rgba(29,158,117,0.15)':'var(--sf)',
-              border:meal===m?`1px solid ${TEAL}`:'1px solid var(--bd2)',
-              color:meal===m?TEAL:'var(--mu3)'}}>{MEAL_LBL[m]}</button>
-        ))}
-      </div>
-
-      {/* Selector de cantidad para el proximo plato que pulses */}
-      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
-        <span style={{fontSize:11,color:'var(--mu3)'}}>Cantidad</span>
-        <button onClick={()=>setQty(q=>Math.max(1,q-1))} style={dQty}>-</button>
-        <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,minWidth:22,textAlign:'center',color:qty>1?TEAL:'var(--tx)'}}>{qty}</span>
-        <button onClick={()=>setQty(q=>q+1)} style={dQty}>+</button>
-        {qty>1 && <span style={{fontSize:10,color:TEAL}}>se anadiran {qty} de una</span>}
-      </div>
-
-      {/* Ordenar (izquierda) + Despensa (derecha) */}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:6,marginBottom:6}}>
-        <div style={{display:'flex',alignItems:'center',gap:5,minWidth:0,flexWrap:'wrap'}}>
-          <span style={{fontSize:9,color:'var(--mu)',letterSpacing:1}}>ORDEN</span>
-          {[['freq','frecuencia'],['dens','proteína/kcal'],['new','recientes'],['old','antiguos']].map(([k,lbl])=>(
-            <button key={k} onClick={()=>setSortBy(k)} style={{fontSize:9,letterSpacing:.5,padding:'4px 7px',cursor:'pointer',fontFamily:"'DM Mono',monospace",background:sortBy===k?'rgba(29,158,117,0.12)':'transparent',border:sortBy===k?`1px solid ${TEAL}`:'1px solid var(--bd2)',color:sortBy===k?TEAL:'var(--mu3)'}}>{lbl}</button>
+      {/* FILA 1 · momento (scroll horizontal) + despensa fija */}
+      <div style={{display:'flex',alignItems:'stretch',gap:8,marginBottom:8}}>
+        <div style={{display:'flex',gap:5,overflowX:'auto',flex:1,minWidth:0,paddingBottom:2,WebkitOverflowScrolling:'touch'}}>
+          {MEALS.map(m=>(
+            <button key={m} onClick={()=>setMeal(m)}
+              style={{fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5,padding:'0 12px',height:34,flexShrink:0,cursor:'pointer',whiteSpace:'nowrap',
+                background:meal===m?'rgba(29,158,117,0.15)':'var(--sf)',
+                border:meal===m?`1px solid ${TEAL}`:'1px solid var(--bd2)',
+                color:meal===m?TEAL:'var(--mu3)'}}>{MEAL_LBL[m]}</button>
           ))}
         </div>
-        <button onClick={()=>setPantryOpen(true)} style={dMini}>▤ DESPENSA</button>
+        <button onClick={()=>setPantryOpen(true)} style={{height:34,flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'0 14px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--mu3)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:1}}>▤ DESPENSA</button>
+      </div>
+
+      {/* FILA 2 · cantidad (izq) + ordenar desplegable (der), misma altura */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:10}}>
+        <div style={{display:'flex',alignItems:'center',height:34,border:'1px solid var(--bd2)',background:'var(--sf)'}}>
+          <span style={{fontSize:9,color:'var(--mu)',letterSpacing:1,padding:'0 10px'}}>CANT</span>
+          <button onClick={()=>setQty(q=>Math.max(1,q-1))} style={{width:32,height:34,background:'none',border:'none',borderLeft:'1px solid var(--bd2)',color:'inherit',fontSize:16,cursor:'pointer'}}>−</button>
+          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,minWidth:28,textAlign:'center',color:qty>1?TEAL:'var(--tx)'}}>{qty}</span>
+          <button onClick={()=>setQty(q=>q+1)} style={{width:32,height:34,background:'none',border:'none',borderRight:'1px solid var(--bd2)',color:'inherit',fontSize:16,cursor:'pointer'}}>+</button>
+        </div>
+        <div style={{position:'relative'}}>
+          <button onClick={()=>setSortOpen(o=>!o)} style={{height:34,display:'flex',alignItems:'center',gap:7,padding:'0 12px',background:'var(--sf)',border:'1px solid var(--bd2)',color:'var(--mu3)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:.5}}>
+            <span style={{color:'var(--mu)'}}>orden:</span><span style={{color:TEAL}}>{SORT_LBL[sortBy]}</span><span style={{fontSize:8}}>▼</span>
+          </button>
+          {sortOpen && (
+            <div style={{position:'absolute',top:36,right:0,zIndex:20,background:'var(--bg,#0e0e0d)',border:'1px solid var(--bd2)',minWidth:150,boxShadow:'0 6px 20px rgba(0,0,0,0.5)'}}>
+              {[['freq','frecuencia'],['dens','proteína / kcal'],['new','recientes'],['old','antiguos']].map(([k,lbl])=>(
+                <button key={k} onClick={()=>{setSortBy(k);setSortOpen(false);}} style={{display:'block',width:'100%',textAlign:'left',padding:'9px 12px',background:sortBy===k?'rgba(29,158,117,0.12)':'transparent',border:'none',borderBottom:'1px solid var(--bd)',color:sortBy===k?TEAL:'var(--tx)',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:11}}>{lbl}</button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',gap:8,marginBottom:10}}>
         {ranked.map(t=>(

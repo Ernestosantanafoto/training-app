@@ -757,7 +757,7 @@ function EntrenoHub({ onSessionComplete, onSave, dietData, sessions, bios }) {
 }
 
 // ── PULSO: briefing diario que cruza todos los datos ──────────
-function PulsoCard({ sessions, dietData }) {
+function PulsoCard({ sessions, dietData, expanded }) {
   const [text, setText] = useState(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -782,13 +782,14 @@ function PulsoCard({ sessions, dietData }) {
       const tplTier = {}; (D.templates || []).forEach(t => { if (t.name) tplTier[t.name] = t.tier || 'verde'; });
       let kInd = 0, kTot = 0;
       (D.entries || []).forEach(e => { if (e.date < ws) return; const tr = tplTier[e.name]; if (!tr) return; kTot += e.kcal || 0; if (tr !== 'verde') kInd += e.kcal || 0; });
+      const fmtDow = ds => { try { return new Date(ds+'T00:00:00').toLocaleDateString('es-ES',{weekday:'long',day:'2-digit',month:'2-digit'}); } catch(e){ return ds; } };
       const snapshot = {
-        hoy: today,
+        hoy: `${today} (${fmtDow(today)})`,
         objetivo: { kcal: (D.target && D.target.kcal_target) || 2800, proteina_g: (D.target && D.target.protein_target) || 160 },
         racha_dieta: calcStreak(D.entries || [], D.freeDays || []),
-        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: g.date, gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps, bb: g.body_battery, estres: g.stress })),
-        dieta_7d: Object.entries(byDate).filter(([d]) => d >= ws).sort().map(([d, v]) => ({ d, kcal: Math.round(v.k), prot: Math.round(v.p) })),
-        entrenos_7d: (sessions || []).filter(s => s && s.date >= ws).map(s => ({ d: s.date, tipo: s.type, musculos: (s.muscles || []).slice(0, 4) })),
+        garmin_7d: (D.garmin || []).filter(g => g.date >= ws).map(g => ({ d: fmtDow(g.date), gasto: g.kcal_total, sueno_h: g.sleep_h, fc: g.resting_hr, pasos: g.steps, bb: g.body_battery, estres: g.stress })),
+        dieta_7d: Object.entries(byDate).filter(([d]) => d >= ws).sort().map(([d, v]) => ({ d: fmtDow(d), kcal: Math.round(v.k), prot: Math.round(v.p) })),
+        entrenos_7d: (sessions || []).filter(s => s && s.date >= ws).map(s => ({ d: fmtDow(s.date), tipo: s.type, musculos: (s.muscles || []).slice(0, 4) })),
         dias_libres: (D.freeDays || []).map(f => f.date).filter(d => d >= ws),
         hoy_ahora: {
           hora_local: new Date().toTimeString().slice(0, 5),
@@ -823,12 +824,12 @@ function PulsoCard({ sessions, dietData }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  if (!ready) return null;
+  if (!ready) return expanded ? <div className="empty">Aún sin datos para el pulso. Registra comida o sube tus datos de Garmin.</div> : null;
   const SYM = { '◐': '#b494e8', '⌁': '#1d9e75', '⚡': 'var(--ac)', '◆': '#ef9f27' };
   return (
-    <div style={{ background: 'var(--sf)', border: '1px solid var(--bd2)', padding: '12px 14px', marginBottom: 18 }}>
+    <div style={{ background: expanded?'transparent':'var(--sf)', border: expanded?'none':'1px solid var(--bd2)', padding: expanded?'4px 0':'12px 14px', marginBottom: 18 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: text ? 8 : 0 }}>
-        <span style={{ fontSize: 9, letterSpacing: 2, color: 'var(--mu3)', fontFamily: "'DM Mono',monospace" }}>◈ PULSO DE HOY</span>
+        <span style={{ fontSize: expanded?11:9, letterSpacing: 2, color: expanded?'#b494e8':'var(--mu3)', fontFamily: "'DM Mono',monospace" }}>◈ PULSO DE HOY</span>
         <button onClick={gen} disabled={busy} style={{ background: 'none', border: 'none', color: 'var(--mu)', fontSize: 13, cursor: 'pointer', padding: '2px 8px' }}>{busy ? '…' : '↻'}</button>
       </div>
       {busy && !text && <div style={{ fontSize: 10, color: 'var(--mu)' }}>leyendo tus datos…</div>}
@@ -840,7 +841,7 @@ function PulsoCard({ sessions, dietData }) {
       {text && text.split('\n').filter(l => l.trim()).slice(0, 5).map((l, i) => {
         const t = l.trim(); const sym = t[0]; const known = SYM[sym];
         return (
-          <div key={i} style={{ fontSize: 11, lineHeight: 1.7, display: 'flex', gap: 8 }}>
+          <div key={i} style={{ fontSize: expanded?13:11, lineHeight: expanded?1.85:1.7, display: 'flex', gap: 8, marginBottom: expanded?6:0 }}>
             <span style={{ color: known || 'var(--mu3)', flexShrink: 0 }}>{known ? sym : '·'}</span>
             <span style={{ opacity: .85 }}>{known ? t.slice(1).trim() : t}</span>
           </div>
@@ -980,8 +981,6 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
       {D.error && <div style={{fontSize:10,color:'var(--ac2,#ff4747)',marginBottom:12,padding:'8px 12px',border:'1px solid rgba(255,71,71,.25)'}}>⚠ Error guardando en Supabase: {D.error}</div>}
 
       <button onClick={()=>setNewOpen(true)} style={{width:'100%',padding:'12px',marginBottom:14,background:'rgba(29,158,117,0.06)',border:`1px solid ${TEAL}`,color:TEAL,cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,letterSpacing:1}}>＋ NUEVO ELEMENTO EN LA DESPENSA</button>
-
-      <PulsoCard sessions={sessions} dietData={D}/>
 
       {/* anillo */}
       <div style={{background:'rgba(29,158,117,0.05)',border:'1px solid rgba(29,158,117,0.3)',padding:16,marginBottom:20,display:'flex',alignItems:'center',gap:16}}>
@@ -1871,16 +1870,18 @@ export default function App() {
         {data.error && <div style={{fontSize:10,color:'var(--ac2)',marginBottom:16,padding:'8px 12px',border:'1px solid rgba(255,71,71,.2)'}}>⚠ Error conectando con Supabase: {data.error}</div>}
 
         {panel==='dashboard' && <>
-          <div style={{height:2,background:dashMode==='dieta'?'#1d9e75':'var(--ac)',margin:'-8px 0 14px',transition:'background .3s'}}/>
+          <div style={{height:2,background:dashMode==='dieta'?'#1d9e75':dashMode==='pulso'?'#b494e8':'var(--ac)',margin:'-8px 0 14px',transition:'background .3s'}}/>
           <div className="diary-tabs" style={{marginBottom:20,display:'flex',alignItems:'center'}}>
             <div className={`diary-tab${dashMode==='entrenos'?' active':''}`} onClick={()=>setDashMode('entrenos')}>Entrenos</div>
             <div className={`diary-tab${dashMode==='dieta'?' active':''}`} onClick={()=>setDashMode('dieta')} style={dashMode==='dieta'?{color:'#1d9e75',borderColor:'#1d9e75'}:{}}>Dieta</div>
+            <div className={`diary-tab${dashMode==='pulso'?' active':''}`} onClick={()=>setDashMode('pulso')} style={dashMode==='pulso'?{color:'#b494e8',borderColor:'#b494e8'}:{}}>Pulso</div>
             {dashMode==='dieta' && (()=>{ const st = calcStreak(dietData?.entries||[], dietData?.freeDays||[]); return (
               <span style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:5,color:'#ef9f27',fontSize:10,letterSpacing:1.5,fontFamily:"'DM Mono',monospace"}}>◆ {st} {st===1?'DÍA':'DÍAS'}</span>
             ); })()}
           </div>
-          {dashMode==='entrenos' && <PulsoCard sessions={data.sessions} dietData={dietData}/>}
-          <Dashboard sessions={data.sessions} onDayClick={handleDayClick} mode={dashMode} dietData={dietData}/>
+          {dashMode==='pulso'
+            ? <PulsoCard sessions={data.sessions} dietData={dietData} expanded/>
+            : <Dashboard sessions={data.sessions} onDayClick={handleDayClick} mode={dashMode} dietData={dietData}/>}
         </>}
         {panel==='prs'       && <PRs sessions={data.sessions} dietData={dietData}/>}
         {panel==='bio'       && <Biometria bios={data.bios} addBio={data.addBio}/>}

@@ -810,7 +810,7 @@ function PulsoCard({ sessions, dietData, expanded }) {
       };
       const r = await fetch('/api/coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot }) });
       const data = await r.json();
-      if (data.text) { setText(data.text); saveUI('pulso_' + today, data.text); }
+      if (data.text) { setText(data.text); const lines = data.text.split('\n').filter(l=>l.trim()); if (lines.length >= 4) saveUI('pulso_' + today, data.text); }
       else setFailed(true);
     } catch (e) { setFailed(true); }
     finally { setBusy(false); }
@@ -948,13 +948,22 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
   const protGap = Math.round(protTarget - totals.protein);
   const protCombo = (() => {
     if (sel !== TODAY_STR() || selIsFree || protGap <= 25) return null;
-    const pick = []; let sum = 0;
-    for (const t of ranked.filter(t => Number(t.protein) >= 12)) {
+    const budget = kcalLeft; // kcal que quedan hasta el objetivo del día
+    // candidatos con proteína real, ordenados por densidad proteica (g proteína por kcal)
+    const cands = ranked
+      .filter(t => Number(t.protein) >= 10 && Number(t.kcal) > 0)
+      .map(t => ({ t, prot: Number(t.protein), kcal: Number(t.kcal), dens: Number(t.protein) / Number(t.kcal) }))
+      .sort((a, b) => b.dens - a.dens);
+    // greedy respetando el presupuesto calórico
+    const pick = []; let sum = 0, ksum = 0;
+    for (const c of cands) {
       if (pick.length >= 3) break;
-      pick.push(t); sum += Number(t.protein);
+      if (budget && ksum + c.kcal > budget * 1.05) continue; // no pasarse del margen (5% de tolerancia)
+      pick.push(c.t); sum += c.prot; ksum += c.kcal;
       if (sum >= protGap) break;
     }
-    return (pick.length && sum >= protGap * 0.6) ? { pick, sum: Math.round(sum) } : null;
+    if (!pick.length) return null;
+    return { pick, sum: Math.round(sum), kcal: Math.round(ksum), enough: sum >= protGap * 0.6, fitsBudget: !budget || ksum <= budget * 1.05 };
   })();
 
 
@@ -1004,7 +1013,8 @@ function DietaDashboard({ calYear, calMonth, calDays, calTitle, goMonth, D, sess
             {sleepInfo && <span style={{fontSize:9,color:sleepInfo.h<7?'#ef9f27':'var(--mu3)',letterSpacing:.3}}>◐ sueño{sleepInfo.own?'':` (últ. ${fmtShort(sleepInfo.date)})`} {Math.floor(sleepInfo.h)}h{String(Math.round((sleepInfo.h%1)*60)).padStart(2,'0')}{sleepInfo.score?` · punt. ${sleepInfo.score}`:''}{sleepInfo.h<7?' · corto':''}</span>}
             {selGarmin && selGarmin.kcal_total>0 && <span style={{fontSize:9,color:'var(--mu3)',letterSpacing:.3}}>⌁ gasto {sel===TODAY_STR()?'hoy':'ese día'}: {fmtN(selGarmin.kcal_total)} · balance {totals.kcal-selGarmin.kcal_total>0?'+':''}{fmtN(totals.kcal-selGarmin.kcal_total)}</span>}
             {selTarget!==kcalTarget && <span style={{fontSize:9,color:TEAL,letterSpacing:.3}}>◎ objetivo de ese día: {fmtN(selTarget)} · ajustado a su gasto real</span>}
-            {protCombo && <span style={{fontSize:9,color:'#25c290',letterSpacing:.3}}>◇ cierra tus {protGap} g con: {protCombo.pick.map(t=>`${t.name} (${Math.round(t.protein)})`).join(' + ')} ≈ {protCombo.sum} g</span>}
+            {protCombo && protCombo.enough && <span style={{fontSize:9,color:'#25c290',letterSpacing:.3}}>◇ cierra tus {protGap} g sin pasarte con: {protCombo.pick.map(t=>`${t.name} (${Math.round(t.protein)})`).join(' + ')} ≈ {protCombo.sum} g · {fmtN(protCombo.kcal)} kcal</span>}
+            {protCombo && !protCombo.enough && <span style={{fontSize:9,color:'#ef9f27',letterSpacing:.3}}>◇ te faltan {protGap} g de proteína pero quedan solo {fmtN(kcalLeft)} kcal: prioriza déficit. Lo más limpio: {protCombo.pick.map(t=>`${t.name} (${Math.round(t.protein)}g/${t.kcal})`).join(' + ')}</span>}
           </div>
           {sel!==TODAY_STR() && <button onClick={()=>setSel(TODAY_STR())} style={dMini}>← volver a hoy</button>}
         </div>
